@@ -384,7 +384,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <details class="method-box">
+  <details class="method-box" open>
     <summary>How this works ▸</summary>
     <div class="method-grid">
       <div>
