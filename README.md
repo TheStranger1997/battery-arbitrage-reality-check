@@ -6,7 +6,7 @@ A Python analysis of how much a grid-scale battery in Great Britain could earn f
 
 ## Project summary
 
-Battery Energy Storage Systems (BESS) in Great Britain earn revenue from several sources: wholesale price arbitrage, the Balancing Mechanism, frequency response services (FFR, DC), and the Capacity Market. This project isolates the wholesale arbitrage component, computes a theoretical upper bound using full-year 2025 half-hourly imbalance prices, and contextualises it against published real-world BESS revenue figures (~£72k/MW/year across all streams). The gap between the oracle ceiling and real-world earnings shows concretely why revenue stacking — not pure arbitrage — defines the GB BESS investment case.
+Battery Energy Storage Systems (BESS) in Great Britain earn revenue from several sources: wholesale price arbitrage, the Balancing Mechanism, frequency response services (FFR, DC), and the Capacity Market. This project isolates the wholesale arbitrage component, computes a theoretical upper bound using full-year 2025 half-hourly imbalance prices, and contextualises it against real-world BESS revenue figures (~£80k/MW/year across all streams — mostly published benchmarks, plus a computed achievable-arbitrage line). The gap between the oracle ceiling and real-world earnings shows concretely why revenue stacking — not pure arbitrage — defines the GB BESS investment case.
 
 ---
 
@@ -56,11 +56,11 @@ This is an **upper bound** — it assumes perfect knowledge of future prices. A 
 | Best month | January 2025 — £11,080/MW |
 | Best single day | 8 January 2025 — £245,881 on the 50 MW battery |
 | Worst month | December 2025 — £3,458/MW |
-| Real GB BESS revenues (all streams) | ~£72,000 /MW/year |
+| Real GB BESS revenues (all streams) | ~£80,000 /MW/year |
 
 **January 2025 dominance:** On 8 January, a cold spell combined with low wind drove settlement prices to £2,900/MWh in some periods. A single day contributed ~£246k — more than any other month except January itself. This illustrates a key feature of GB imbalance prices: they are mean-reverting but fat-tailed. Arbitrage revenue is not steady; it is concentrated in a handful of stress events.
 
-**The gap is the story:** The oracle arbitrage ceiling of ~£65k/MW sits *below* what batteries actually earn (~£72k/MW). Pure arbitrage — even at the theoretical maximum — does not explain BESS revenues in GB. Frequency response, the Balancing Mechanism, and the Capacity Market are what close (and exceed) the gap.
+**The gap is the story:** The oracle arbitrage ceiling of ~£65k/MW sits *below* what batteries actually earn (~£80k/MW). Pure arbitrage — even at the theoretical maximum — does not explain BESS revenues in GB. Frequency response, the Balancing Mechanism, and the Capacity Market are what close (and exceed) the gap.
 
 ![Daily arbitrage P&L for 2025](assets/daily_pnl_2025.png)
 
@@ -70,24 +70,41 @@ This is an **upper bound** — it assumes perfect knowledge of future prices. A 
 
 ## Revenue comparison: arbitrage vs the real revenue stack
 
-`revenue_comparison.py` places the oracle arbitrage ceiling next to the *actual* GB BESS revenue stack for 2025. The real-world stack below uses **published industry benchmarks** (£/MW/year) — it is **not** computed from raw data, because granular per-asset revenue sits behind paywalls (Modo Energy, Cornwall Insight, LCP Delta). These figures are used the same way a BESS investment analyst uses them for initial screening: as sourced approximations, clearly labelled.
+`revenue_comparison.py` places the oracle arbitrage ceiling next to the *actual* GB BESS revenue stack for 2025. Four of the five streams are **published industry benchmarks** (£/MW/year) — **not** computed from raw data, because granular per-asset revenue sits behind paywalls (Modo Energy, Cornwall Insight, LCP Delta). The exception is **achieved wholesale arbitrage**, which *is* computed here, by the no-foresight forecast model below (see the next section). The benchmark figures are used the same way a BESS investment analyst uses them for initial screening: as sourced approximations, clearly labelled.
 
 | Revenue stream | £/MW/year | Share | Source basis |
 |---|---|---|---|
-| Balancing Mechanism | 28,000 | 39% | Modo Energy BESS Revenue Tracker 2025 |
-| Frequency response (DC etc.) | 18,000 | 25% | NESO DC procurement + Modo Energy |
-| Wholesale arbitrage (achieved) | 15,000 | 21% | Implied: oracle × typical day-ahead capture |
-| Capacity Market | 7,000 | 10% | NESO CM auction results (public) |
-| Other (DM, DR, triad) | 4,000 | 6% | Cornwall Insight estimates |
-| **Total** | **72,000** | | |
+| Balancing Mechanism | 28,000 | 35% | Modo Energy BESS Revenue Tracker 2025 |
+| Wholesale arbitrage (achieved) | 23,269 | 29% | **Computed:** no-foresight 7-day forecast model (`forecast_arbitrage.py`) |
+| Frequency response (DC etc.) | 18,000 | 22% | NESO DC procurement + Modo Energy |
+| Capacity Market | 7,000 | 9% | NESO CM auction results (public) |
+| Other (DM, DR, triad) | 4,000 | 5% | Cornwall Insight estimates |
+| **Total** | **80,269** | | |
 
 Two numbers carry the message:
 - **£65k** — the oracle arbitrage *ceiling* (perfect foresight on imbalance prices).
-- **£15k** — *achieved* arbitrage within the real stack, just **~23% of that ceiling**.
+- **£23k** — *achieved* arbitrage from a realistic no-foresight strategy, just **~36% of that ceiling** (a computed figure, not an assumption).
 
-No operator captures the full spread: forecasts are imperfect and the largest spikes (8 January's £2,900/MWh) are nearly impossible to position for in advance. Arbitrage is a supporting player (~21% of revenue); the Balancing Mechanism and frequency response dominate. This is why GB BESS economics are about **revenue stacking**, not arbitrage alone.
+No operator captures the full spread: forecasts are imperfect and the largest spikes (8 January's £2,900/MWh) are nearly impossible to position for in advance. Arbitrage is a meaningful but supporting stream (~29% of revenue); the Balancing Mechanism and frequency response dominate. This is why GB BESS economics are about **revenue stacking**, not arbitrage alone.
 
 ![Oracle arbitrage vs real revenue stack](assets/revenue_comparison.png)
+
+---
+
+## Achievable arbitrage without perfect foresight
+
+The oracle knows all 48 of today's prices before it acts. A real battery does not — it must commit its charge/discharge windows each morning using only *past* prices, then live with whatever actually happens. `forecast_arbitrage.py` computes that achievable number so the "achieved arbitrage" line above is **calculated, not assumed**.
+
+The forecast exploits the strong, repeating time-of-day shape of GB prices (cheap overnight, dear at the evening peak): it predicts today's shape from recent history, charges in the 4 lowest-forecast periods and discharges in the 4 highest, trades only when the forecast says it's profitable — and is then settled at today's **actual** prices, wrong days included. It uses the same price series and battery as the oracle, so the **capture rate** isolates one thing: the value of foresight.
+
+| Forecast rule | £/MW/year | Capture vs oracle | Loss-making days |
+|---|---|---|---|
+| Persistence (today ≈ yesterday) | 11,030 | 17% | 133 / 362 |
+| **Trailing 7-day shape** (headline) | **23,269** | **36%** | 88 / 356 |
+
+So realistic, computed capture is **~36%** — and as low as **17%** with a naive one-day forecast. The gap to the £65k ceiling is the **scarcity tail**: the events that dominate the oracle total (8 January's £2,900/MWh) don't repeat day-to-day, so no shape-based forecast can position for them in advance. This replaces the project's earlier *assumed* £15k figure with a number that falls out of the model.
+
+![Oracle ceiling vs achievable arbitrage](assets/forecast_arbitrage.png)
 
 ---
 
@@ -157,7 +174,7 @@ The annualised common-day imbalance figure (£63,095) is close to the full-year 
 
 ## Tests
 
-`test_arbitrage.py` runs a set of synthetic-data sanity checks on the core logic (RTE application, greedy-vs-ordered relationships, the cycle monotonicity, and the settlement-period→UTC mapping). No downloaded data needed, so it runs in CI on a clean checkout:
+`test_arbitrage.py` runs a set of synthetic-data sanity checks on the core logic (RTE application, greedy-vs-ordered relationships, cycle monotonicity, the forecast model's foresight bounds, and the settlement-period→UTC mapping). No downloaded data needed, so it runs in CI on a clean checkout:
 
 ```bash
 python test_arbitrage.py
@@ -169,11 +186,11 @@ A GitHub Actions workflow (`.github/workflows/tests.yml`) runs it on every push.
 
 ## Caveats
 
-- **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. Day-ahead price forecasting typically captures 60–80% of the oracle spread.
+- **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. This is now quantified (see the achievable-arbitrage section): a no-foresight forecast captures only ~36% of the oracle spread on imbalance prices — much of the ceiling is an unforecastable scarcity tail.
 - **Imbalance prices are more volatile than traded prices.** This is now quantified (see the Market Index section): on like-for-like days, the traded-wholesale ceiling is ~57% of the imbalance ceiling (~£36k vs ~£63k annualised). The £65k headline is an imbalance-price upper bound, not a realistic day-ahead arbitrage estimate.
 - **Clock-change days skipped.** 30 March (46 periods, BST transition) and 26 October (50 periods, GMT transition) are excluded — 2 of 365 days.
 - **One-cycle-per-day cap.** The base model does not allow partial or multiple cycles. The cost of this assumption is quantified in the cycling-sensitivity section (a 2nd cycle adds +71% but doubles wear); the cap is retained to reflect realistic warranty/degradation limits.
-- **The real-world revenue stack is benchmark-based, not computed.** The £72k/MW figure and its breakdown come from published industry sources (see the table above), not from raw market data. The "achieved arbitrage" line (£15k) is itself a benchmark estimate, internally consistent with the ~23% capture rate but not independently derived here.
+- **The real-world revenue stack is mostly benchmark-based.** Four of the five streams (BM, frequency response, Capacity Market, other), totalling the bulk of the ~£80k/MW figure, come from published industry sources (see the table above), not from raw market data. The exception is the achieved-arbitrage line (£23k), which **is** computed here by the no-foresight forecast model — so the total is part-benchmark, part-modelled.
 
 ---
 
@@ -191,25 +208,28 @@ pip install -r requirements.txt
 # 3. Fetch a full year of half-hourly prices (skips months already downloaded)
 python fetch_prices.py
 
-# 4. Run the arbitrage simulation
+# 4. Run the oracle (perfect-foresight) arbitrage simulation
 python simulate_arbitrage.py
 
-# 5. Compare against the real-world BESS revenue stack
+# 5. Compute achievable arbitrage with no foresight (feeds steps 6 and 11)
+python forecast_arbitrage.py
+
+# 6. Compare against the real-world BESS revenue stack
 python revenue_comparison.py
 
-# 6. Duration sensitivity sweep (1h / 2h / 4h)
+# 7. Duration sensitivity sweep (1h / 2h / 4h)
 python duration_sweep.py
 
-# 7. Cycling sensitivity (1 vs 2 cycles/day)
+# 8. Cycling sensitivity (1 vs 2 cycles/day)
 python cycles_sweep.py
 
-# 8. How loose is the upper bound? (ordering-constrained oracle)
+# 9. How loose is the upper bound? (ordering-constrained oracle)
 python ordering_oracle.py
 
-# 9. Imbalance vs traded wholesale (Market Index) comparison
+# 10. Imbalance vs traded wholesale (Market Index) comparison
 python market_index_compare.py
 
-# 10. Build the self-contained HTML dashboard (opens in your browser)
+# 11. Build the self-contained HTML dashboard (opens in your browser)
 python build_dashboard.py
 
 # Run the sanity tests
@@ -238,6 +258,7 @@ Outputs are saved to `data/` (gitignored — re-fetch locally):
 bess-arbitrage/
 ├── fetch_prices.py         # Downloads Elexon half-hourly prices → data/
 ├── simulate_arbitrage.py   # Oracle arbitrage model → daily P&L + chart
+├── forecast_arbitrage.py   # Achievable (no-foresight) arbitrage → capture rate + chart
 ├── revenue_comparison.py   # Arbitrage ceiling vs real revenue stack → chart
 ├── duration_sweep.py       # Arbitrage by battery duration (1h/2h/4h) → chart
 ├── cycles_sweep.py         # Arbitrage by daily cycle cap (1 vs 2/day) → chart
@@ -262,5 +283,5 @@ bess-arbitrage/
 - ~~Compare oracle arbitrage revenues against real GB BESS revenue streams (BM, FFR, DC, Capacity Market).~~ ✅ Done — see `revenue_comparison.py`.
 - ~~Build an interactive dashboard.~~ ✅ Done — see `build_dashboard.py` / `dashboard.html`.
 - ~~Compare imbalance vs traded-wholesale (day-ahead-ish) prices.~~ ✅ Done — see `market_index_compare.py`.
-- Add a *forecast-based achievable* model (no perfect foresight) to estimate realised capture, replacing the implied £15k figure with a computed one.
+- ~~Add a *forecast-based achievable* model (no perfect foresight) to estimate realised capture, replacing the implied £15k figure with a computed one.~~ ✅ Done — see `forecast_arbitrage.py` (computed ~36% capture, £23k/MW).
 - Optionally replace benchmark revenue figures with values computed from raw Elexon BM data.

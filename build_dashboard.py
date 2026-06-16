@@ -18,9 +18,10 @@ import webbrowser
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
 
-PRICES_MONTH = os.path.join("data", "prices_2025-05.csv")
-RESULTS_FILE = os.path.join("data", "arbitrage_results.csv")
-OUTPUT_HTML  = "dashboard.html"
+PRICES_MONTH  = os.path.join("data", "prices_2025-05.csv")
+RESULTS_FILE  = os.path.join("data", "arbitrage_results.csv")
+FORECAST_FILE = os.path.join("data", "forecast_results.csv")
+OUTPUT_HTML   = "dashboard.html"
 
 SAMPLE_DATE  = "2025-05-14"   # a Wednesday — typical weekday price shape
 POWER_MW     = 50
@@ -28,16 +29,33 @@ POWER_MW     = 50
 # Number of half-hour periods charged / discharged per day (matches the model)
 PERIODS_PER_CYCLE = 4
 
-# Real-world GB BESS revenue stack (2025, £/MW/yr) — published benchmarks.
+# Real-world GB BESS revenue stack (2025, £/MW/yr). Four streams are published
+# benchmarks; "Wholesale arbitrage (achieved)" is computed at build time from
+# forecast_arbitrage.py (None below = filled by load_achieved_arbitrage()).
 # Order: bottom → top of the stacked bar.
 REVENUE_STACK = [
     ("Balancing Mechanism",          28_000, "#2f6f9f"),
     ("Frequency response (DC etc.)", 18_000, "#e08a1e"),
-    ("Wholesale arbitrage (achieved)", 15_000, "#3a9d5d"),
+    ("Wholesale arbitrage (achieved)", None, "#3a9d5d"),
     ("Capacity Market",               7_000, "#8a6bbf"),
     ("Other (DM, DR, triad)",         4_000, "#9c6b58"),
 ]
-ACHIEVED_ARBITRAGE = 15_000   # the "achieved wholesale" line, for the KPIs
+
+
+def load_achieved_arbitrage() -> int:
+    """
+    Achieved (no-foresight) wholesale arbitrage, £/MW/yr — computed by
+    forecast_arbitrage.py's 7-day forecast model, not assumed. Read live so the
+    dashboard stays in sync if that model is re-run.
+    """
+    fc = pd.read_csv(FORECAST_FILE)
+    return round(fc["realised_net_gbp"].sum() / POWER_MW)
+
+
+def resolved_stack(achieved: int) -> list:
+    """The revenue stack with the computed achieved-arbitrage amount filled in."""
+    return [(label, achieved if amount is None else amount, colour)
+            for label, amount, colour in REVENUE_STACK]
 
 
 # ── Build the embedded data ──────────────────────────────────────────────────
@@ -76,23 +94,23 @@ def build_daily_pnl() -> dict:
     }
 
 
-def build_kpis(daily_pnl: dict) -> dict:
+def build_kpis(daily_pnl: dict, stack: list, achieved: int) -> dict:
     oracle_per_mw = sum(daily_pnl["net"]) / POWER_MW
-    real_total    = sum(amount for _, amount, _ in REVENUE_STACK)
-    pct_of_ceiling = round(ACHIEVED_ARBITRAGE / oracle_per_mw * 100)
+    real_total    = sum(amount for _, amount, _ in stack)
+    pct_of_ceiling = round(achieved / oracle_per_mw * 100)
     return {
         "oracle_per_mw":  round(oracle_per_mw),
-        "achieved":       ACHIEVED_ARBITRAGE,
+        "achieved":       achieved,
         "real_total":     real_total,
         "pct_of_ceiling": pct_of_ceiling,
     }
 
 
-def build_stack() -> dict:
+def build_stack(stack: list) -> dict:
     return {
-        "labels": [label for label, _, _ in REVENUE_STACK],
-        "values": [amount for _, amount, _ in REVENUE_STACK],
-        "colours": [colour for _, _, colour in REVENUE_STACK],
+        "labels": [label for label, _, _ in stack],
+        "values": [amount for _, amount, _ in stack],
+        "colours": [colour for _, _, colour in stack],
     }
 
 
@@ -129,8 +147,10 @@ def build_duration() -> dict:
 def main():
     sample_day = build_sample_day()
     daily_pnl  = build_daily_pnl()
-    kpis       = build_kpis(daily_pnl)
-    stack      = build_stack()
+    achieved   = load_achieved_arbitrage()
+    stack_rows = resolved_stack(achieved)
+    kpis       = build_kpis(daily_pnl, stack_rows, achieved)
+    stack      = build_stack(stack_rows)
     duration   = build_duration()
 
     payload = {
@@ -286,9 +306,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div class="unit">/MW/yr · perfect foresight</div>
     </div>
     <div class="kpi">
-      <div class="label">Achieved (implied)</div>
+      <div class="label">Achieved (modelled)</div>
       <div class="value">£__KPI_ACHIEVED__</div>
-      <div class="unit">/MW/yr · real capture</div>
+      <div class="unit">/MW/yr · no-foresight forecast</div>
     </div>
     <div class="kpi k-real">
       <div class="label">Real GB stack</div>
@@ -334,13 +354,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="takeaway">
     <h2>Key takeaway</h2>
     <ul>
-      <li>Achieved wholesale arbitrage is only <b>~__KPI_PCT__%</b> of the theoretical maximum. Perfect foresight is impossible, and the biggest price spikes are nearly unforecastable.</li>
+      <li>A no-foresight forecast captures only <b>~__KPI_PCT__%</b> of the theoretical maximum (a computed figure, not an assumption). Perfect foresight is impossible, and the biggest price spikes are nearly unforecastable.</li>
       <li>Even the theoretical maximum (<b>£__KPI_ORACLE__</b>/MW/yr) sits <b>below</b> all-stream revenue (<b>£__KPI_REAL__</b>/MW/yr). Revenue stacking, not arbitrage, defines the GB BESS investment case.</li>
     </ul>
   </div>
 
   <footer>
-    <div class="sources"><b>Data sources:</b> Elexon Insights API (half-hourly imbalance prices); NESO Capacity Market auction results; revenue-stack benchmarks from Modo Energy and Cornwall Insight. Real-world stack figures are published benchmarks, not computed from raw data.</div>
+    <div class="sources"><b>Data sources:</b> Elexon Insights API (half-hourly imbalance prices); NESO Capacity Market auction results; revenue-stack benchmarks from Modo Energy and Cornwall Insight. Achieved wholesale arbitrage is computed here from a no-foresight forecast model; the other four revenue streams are published benchmarks, not computed from raw data.</div>
   </footer>
 
 </div>

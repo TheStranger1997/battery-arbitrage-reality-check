@@ -4,6 +4,22 @@ Dated record of key decisions and findings as the project develops.
 
 ---
 
+## 2026-06-16 — Forecast-based achievable arbitrage (computed capture rate)
+
+`forecast_arbitrage.py`. Replaced the project's last *assumed* number — the implied £15k "achieved wholesale arbitrage" (oracle × a guessed ~23% capture) — with a **computed** figure from a no-perfect-foresight model.
+
+**Method:** each day the battery commits charge/discharge windows using only past prices (it forecasts today's price *shape*, picks the 4 lowest-forecast periods to charge and 4 highest to discharge, and trades only if the forecast says it's profitable), then is settled at today's **actual** prices — wrong days included, no `max(0,·)` clamp. Same imbalance series, same battery, and (like the base oracle) no intraday SoC ordering constraint, so the **capture rate = achievable ÷ oracle** isolates exactly one thing: foresight.
+
+**Two forecast rules:**
+- Persistence (today ≈ yesterday): **£11,030/MW, 17% capture**, 133/362 loss-making days.
+- Trailing 7-day shape (headline): **£23,269/MW, 36% capture**, 88/356 loss days.
+
+Chose the 7-day model as the headline achievable figure: no desk trades off literally only yesterday, and it has far fewer loss days. Persistence is reported as a conservative floor. **The gap to the £65k ceiling is the scarcity tail** — the 8 Jan £2,900/MWh event dominates the oracle total but can't be forecast from 7 Jan, so a shape-based forecast captures the routine overnight-to-peak spread and misses the spikes.
+
+**Wiring (kept in sync, not hard-coded):** `revenue_comparison.py` and `build_dashboard.py` now read the achieved figure live from `data/forecast_results.csv` (mirroring how the oracle is read from `arbitrage_results.csv`). Knock-on changes: the revenue stack total rose £72k → **£80,269/MW** (arbitrage slice 15k → 23.3k, now the 2nd-largest stream at 29%); capture rate shown everywhere moved 23% → 36%. The thesis is unchanged and slightly stronger — the £65k oracle ceiling still sits **below** real all-stream revenue (£80k). Added 3 forecast tests to `test_arbitrage.py` (perfect forecast captures the full oracle; no forecast beats foresight; a reversed forecast underperforms) — 13/13 pass. README revenue-comparison table, caveats, run steps, structure and next-steps updated; charts refreshed in `assets/`.
+
+---
+
 ## 2026-06-16 — Imbalance vs traded wholesale prices (item 7)
 
 `market_index_compare.py`. Reran the oracle on the Market Index Price (MID, Elexon `datasets/MID`) — the volume-weighted price of real short-term wholesale trades — as a more defensible proxy for what a battery actually trades against than imbalance cash-out prices.

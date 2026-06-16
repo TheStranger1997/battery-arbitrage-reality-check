@@ -15,6 +15,7 @@ import simulate_arbitrage as sim
 import ordering_oracle as oo
 import cycles_sweep as cyc
 import fetch_prices as fp
+import forecast_arbitrage as fc
 
 EPS = 0.01
 _failures = []
@@ -87,6 +88,26 @@ def main():
           str(p1) == "2025-04-30 23:00:00+00:00", str(p1))
     check("period 3 maps to 00:00 UTC settlement day",
           str(p3) == "2025-05-01 00:00:00+00:00", str(p3))
+
+    # 9) Forecast model: a PERFECT forecast (forecast == actual) captures exactly
+    #    the oracle/greedy amount — no more, no less.
+    ci, di, _ = fc.windows_from_forecast(rising.tolist())
+    check("perfect forecast captures the full oracle amount",
+          abs(fc.realised_net(rising.tolist(), ci, di)
+              - oo.greedy_day(rising.tolist())) < EPS)
+
+    # 10) No forecast can beat perfect foresight: realised <= greedy upper bound.
+    fc_idx = fc.windows_from_forecast(rand.tolist())
+    check("forecast windows never beat the oracle on a random day",
+          fc.realised_net(rand.tolist(), fc_idx[0], fc_idx[1])
+          <= oo.greedy_day(rand.tolist()) + EPS)
+
+    # 11) A WRONG forecast (reversed shape) loses money vs the oracle: charging in
+    #     the actually-dear periods and selling in the cheap ones underperforms.
+    ci_w, di_w, _ = fc.windows_from_forecast(falling.tolist())   # forecast: falling
+    check("a reversed forecast underperforms the oracle on rising prices",
+          fc.realised_net(rising.tolist(), ci_w, di_w)
+          < oo.greedy_day(rising.tolist()) - EPS)
 
     print()
     if _failures:

@@ -33,25 +33,33 @@ POWER_MW = 50
 
 # ── Paths ────────────────────────────────────────────────────────────────────────
 
-RESULTS_FILE = os.path.join("data", "arbitrage_results.csv")
-PLOT_FILE    = os.path.join("data", "revenue_comparison.png")
+RESULTS_FILE  = os.path.join("data", "arbitrage_results.csv")
+FORECAST_FILE = os.path.join("data", "forecast_results.csv")
+PLOT_FILE     = os.path.join("data", "revenue_comparison.png")
 
 # ── Real-world GB BESS revenue stack (2025, £/MW/year) ──────────────────────────
 #
-# Published industry benchmarks — NOT computed from raw data. See module docstring.
-# Each entry: (label, £/MW/year, source basis).
-# Ordered largest-to-smallest so the stacked bar reads top-down sensibly.
+# Four of the five streams are published industry benchmarks — NOT computed from
+# raw data (see module docstring). The fifth, achieved wholesale arbitrage, IS
+# computed here: it is read live from forecast_arbitrage.py's no-foresight model
+# (data/forecast_results.csv), replacing the figure that used to be an assumed
+# "oracle x typical capture". Each benchmark entry: (label, £/MW/year, source).
 
-REVENUE_STACK = [
-    ("Balancing Mechanism",        28_000, "Modo Energy BESS Revenue Tracker 2025"),
+BENCHMARK_STREAMS = [
+    ("Balancing Mechanism",          28_000, "Modo Energy BESS Revenue Tracker 2025"),
     ("Frequency response (DC etc.)", 18_000, "NESO DC procurement + Modo Energy"),
-    ("Wholesale arbitrage (achieved)", 15_000, "Implied: oracle x typical day-ahead capture"),
-    ("Capacity Market",             7_000, "NESO CM auction results (public)"),
-    ("Other (DM, DR, triad)",       4_000, "Cornwall Insight estimates"),
+    ("Capacity Market",               7_000, "NESO CM auction results (public)"),
+    ("Other (DM, DR, triad)",         4_000, "Cornwall Insight estimates"),
 ]
 
-# Colours for each stream (consistent, colour-blind-friendly-ish)
-STACK_COLOURS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b"]
+# Fixed colour per stream label so the chart stays consistent after re-sorting
+STREAM_COLOURS = {
+    "Balancing Mechanism":            "#1f77b4",
+    "Wholesale arbitrage (achieved)": "#2ca02c",
+    "Frequency response (DC etc.)":   "#ff7f0e",
+    "Capacity Market":                "#9467bd",
+    "Other (DM, DR, triad)":          "#8c564b",
+}
 
 
 def load_oracle_per_mw() -> float:
@@ -64,13 +72,34 @@ def load_oracle_per_mw() -> float:
     return total_net / POWER_MW
 
 
+def load_achieved_arbitrage_per_mw() -> float:
+    """
+    Achieved (no-foresight) arbitrage in £/MW/year — computed by
+    forecast_arbitrage.py, not assumed. Stays in sync if that model is re-run.
+    """
+    fc = pd.read_csv(FORECAST_FILE)
+    return fc["realised_net_gbp"].sum() / POWER_MW
+
+
+def build_revenue_stack(achieved_arb_per_mw: float):
+    """
+    Assemble the full revenue stack: the four benchmark streams plus the
+    computed achieved-arbitrage stream, sorted largest-to-smallest so the
+    stacked bar reads top-down sensibly.
+    """
+    stack = BENCHMARK_STREAMS + [
+        ("Wholesale arbitrage (achieved)", round(achieved_arb_per_mw),
+         "Computed: no-foresight 7-day forecast model (forecast_arbitrage.py)"),
+    ]
+    return sorted(stack, key=lambda row: row[1], reverse=True)
+
+
 def main():
     oracle_per_mw = load_oracle_per_mw()
-    real_total    = sum(amount for _, amount, _ in REVENUE_STACK)
+    achieved_arb  = load_achieved_arbitrage_per_mw()   # computed, not assumed
+    revenue_stack = build_revenue_stack(achieved_arb)
+    real_total    = sum(amount for _, amount, _ in revenue_stack)
 
-    # The achieved-arbitrage slice within the real stack, for context
-    achieved_arb = next(amt for label, amt, _ in REVENUE_STACK
-                        if label.startswith("Wholesale"))
     capture_rate = achieved_arb / oracle_per_mw
 
     # ── Printed summary ──────────────────────────────────────────────────────────
@@ -82,7 +111,7 @@ def main():
     print(f"  Real-world total (all streams)        : £{real_total:>8,.0f}")
     print()
     print("  Real-world revenue stack:")
-    for label, amount, source in REVENUE_STACK:
+    for label, amount, source in revenue_stack:
         share = amount / real_total
         print(f"    {label:<32} £{amount:>7,.0f}  ({share:4.0%})   [{source}]")
     print(f"    {'-' * 32} {'-' * 8}")
@@ -114,7 +143,8 @@ def main():
 
     # Right bar: real revenue stack (stacked)
     bottom = 0
-    for (label, amount, _), colour in zip(REVENUE_STACK, STACK_COLOURS):
+    for label, amount, _ in revenue_stack:
+        colour = STREAM_COLOURS[label]
         ax.bar(x_real, amount, width=bar_width, bottom=bottom,
                color=colour, label=label)
         # Label each segment in the middle if it's tall enough to fit text
