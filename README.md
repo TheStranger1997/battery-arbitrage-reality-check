@@ -16,10 +16,10 @@ Battery Energy Storage Systems (BESS) in Great Britain earn revenue from several
 
 - Base URL: `https://data.elexon.co.uk/bmrs/api/v1`
 - Endpoint used: `/balancing/settlement/system-prices/{date}?format=json`
-- Returns 48 half-hourly Settlement System Prices (System Sell Price + System Buy Price) per day.
-- Price used in this model: mid-point of SSP and SBP (`mid_price = (SSP + SBP) / 2`).
+- Returns 48 half-hourly settlement (imbalance) prices per day.
+- **Single imbalance price:** GB moved to a single cash-out price in 2015 (BSC modification P305), so the System Sell Price and System Buy Price are identical in every period. Verified across the full dataset: `sell != buy` in **0 of 17,520 rows**. This project keeps both columns for transparency but uses their common value as the price series.
 
-> **Note on price series:** Settlement system prices (imbalance prices) are more volatile than day-ahead or intraday market prices, because they reflect real-time scarcity. Using them for arbitrage modelling produces a higher — and less achievable — ceiling than a day-ahead price series would. See Caveats below.
+> **Note on price series:** Settlement (imbalance) prices are more volatile than day-ahead or intraday market prices, because they reflect real-time scarcity. Using them for arbitrage modelling produces a higher — and less achievable — ceiling than a day-ahead price series would. See Caveats below.
 
 ---
 
@@ -62,6 +62,10 @@ This is an **upper bound** — it assumes perfect knowledge of future prices. A 
 
 **The gap is the story:** The oracle arbitrage ceiling of ~£65k/MW sits *below* what batteries actually earn (~£72k/MW). Pure arbitrage — even at the theoretical maximum — does not explain BESS revenues in GB. Frequency response, the Balancing Mechanism, and the Capacity Market are what close (and exceed) the gap.
 
+![Daily arbitrage P&L for 2025](assets/daily_pnl_2025.png)
+
+*Daily perfect-foresight P&L across 2025. The 8 January scarcity spike (~£246k in a single day) dwarfs every other day — arbitrage revenue is concentrated in a handful of events, not earned steadily.*
+
 ---
 
 ## Revenue comparison: arbitrage vs the real revenue stack
@@ -83,12 +87,30 @@ Two numbers carry the message:
 
 No operator captures the full spread: forecasts are imperfect and the largest spikes (8 January's £2,900/MWh) are nearly impossible to position for in advance. Arbitrage is a supporting player (~21% of revenue); the Balancing Mechanism and frequency response dominate. This is why GB BESS economics are about **revenue stacking**, not arbitrage alone.
 
+![Oracle arbitrage vs real revenue stack](assets/revenue_comparison.png)
+
+---
+
+## Duration sensitivity (1h / 2h / 4h)
+
+`duration_sweep.py` reruns the oracle model at different durations, holding power fixed at 50 MW, to surface the live GB "how long should a battery be?" trade-off.
+
+| Duration | Capacity | £/MW/year | £/MWh-of-capacity/year | vs 2h |
+|---|---|---|---|---|
+| 1-hour | 50 MWh | £36,010 | £36,010 | −45% |
+| 2-hour | 100 MWh | £65,179 | £32,589 | (base) |
+| 4-hour | 200 MWh | £111,395 | £27,849 | +71% |
+
+**The trade-off in one table:** revenue *per MW of power* rises steeply with duration (+71% for a 4-hour battery), because longer batteries capture more of each price spike — on 8 January, prices sat at £2,900/MWh for eight consecutive half-hours, but a 2-hour battery can only discharge into four of them. Yet revenue *per MWh of capacity* falls with duration: each additional MWh is dispatched onto shallower, less profitable parts of the price curve. This is exactly why GB has seen a shift toward longer-duration (2h→4h) batteries even as the per-MWh return diminishes.
+
+![Arbitrage by battery duration](assets/duration_sweep.png)
+
 ---
 
 ## Caveats
 
 - **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. Day-ahead price forecasting typically captures 60–80% of the oracle spread.
-- **Imbalance prices (SSP/SBP) are more volatile than traded prices.** Using day-ahead or intraday market prices would produce a lower, cleaner arbitrage estimate. The £65k figure should be read as an imbalance-price upper bound, not a day-ahead arbitrage estimate.
+- **Imbalance prices are more volatile than traded prices.** Using day-ahead or intraday market prices would produce a lower, cleaner arbitrage estimate. The £65k figure should be read as an imbalance-price upper bound, not a day-ahead arbitrage estimate.
 - **Clock-change days skipped.** 30 March (46 periods, BST transition) and 26 October (50 periods, GMT transition) are excluded — 2 of 365 days.
 - **One-cycle-per-day cap.** The model does not allow partial cycles or multiple cycles, even on days with multiple price spikes.
 - **The real-world revenue stack is benchmark-based, not computed.** The £72k/MW figure and its breakdown come from published industry sources (see the table above), not from raw market data. The "achieved arbitrage" line (£15k) is itself a benchmark estimate, internally consistent with the ~23% capture rate but not independently derived here.
@@ -104,7 +126,7 @@ python -m venv venv
 # source venv/bin/activate    # macOS / Linux
 
 # 2. Install dependencies
-pip install requests pandas matplotlib
+pip install -r requirements.txt
 
 # 3. Fetch a full year of half-hourly prices (skips months already downloaded)
 python fetch_prices.py
@@ -114,6 +136,12 @@ python simulate_arbitrage.py
 
 # 5. Compare against the real-world BESS revenue stack
 python revenue_comparison.py
+
+# 6. Duration sensitivity sweep (1h / 2h / 4h)
+python duration_sweep.py
+
+# 7. Build the self-contained HTML dashboard (opens in your browser)
+python build_dashboard.py
 ```
 
 Outputs are saved to `data/` (gitignored — re-fetch locally):
@@ -122,6 +150,9 @@ Outputs are saved to `data/` (gitignored — re-fetch locally):
 - `data/arbitrage_results.csv` — daily P&L breakdown
 - `data/daily_pnl_plot.png` — full-year arbitrage chart
 - `data/revenue_comparison.png` — arbitrage ceiling vs real revenue stack
+- `data/duration_sweep.png` — revenue by battery duration
+
+`dashboard.html` (project root) is a single self-contained file with all data embedded — open it directly in any browser.
 
 ---
 
@@ -132,6 +163,11 @@ bess-arbitrage/
 ├── fetch_prices.py         # Downloads Elexon half-hourly prices → data/
 ├── simulate_arbitrage.py   # Oracle arbitrage model → daily P&L + chart
 ├── revenue_comparison.py   # Arbitrage ceiling vs real revenue stack → chart
+├── duration_sweep.py       # Arbitrage by battery duration (1h/2h/4h) → chart
+├── build_dashboard.py      # Reads CSVs → self-contained dashboard.html
+├── dashboard.html          # Single-file interactive dashboard (generated)
+├── requirements.txt        # Pinned dependencies
+├── assets/                 # Curated charts embedded in this README
 ├── data/                   # Downloaded prices and results (gitignored)
 ├── venv/                   # Python virtual environment (gitignored)
 ├── README.md
@@ -143,6 +179,6 @@ bess-arbitrage/
 ## Next steps
 
 - ~~Compare oracle arbitrage revenues against real GB BESS revenue streams (BM, FFR, DC, Capacity Market).~~ ✅ Done — see `revenue_comparison.py`.
-- Build an interactive dashboard (Streamlit or Panel).
-- Explore a heuristic or day-ahead forecast model to estimate *achievable* arbitrage.
+- ~~Build an interactive dashboard.~~ ✅ Done — see `build_dashboard.py` / `dashboard.html`.
+- Explore a heuristic or day-ahead forecast model to estimate *achievable* arbitrage (replacing the implied £15k figure with a computed one).
 - Optionally replace benchmark revenue figures with values computed from raw Elexon BM data.

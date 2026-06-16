@@ -104,6 +104,10 @@ def fetch_month(year: int, month: int) -> pd.DataFrame:
                 "datetime_utc":       period_to_datetime(date_str, period),
                 "settlement_date":    date_str,
                 "settlement_period":  period,
+                # GB has used a SINGLE imbalance price since 2015 (BSC mod P305),
+                # so systemSellPrice == systemBuyPrice in every period. We keep
+                # both columns for transparency, but they are identical and the
+                # "mid" below is simply the single imbalance price.
                 "sell_price_gbp_mwh": item.get("systemSellPrice"),
                 "buy_price_gbp_mwh":  item.get("systemBuyPrice"),
             })
@@ -112,6 +116,7 @@ def fetch_month(year: int, month: int) -> pd.DataFrame:
         time.sleep(REQUEST_DELAY)
 
     df = pd.DataFrame(records).sort_values("datetime_utc").set_index("datetime_utc")
+    # mid == sell == buy under single imbalance pricing; kept as the price series
     df["mid_price_gbp_mwh"] = (df["sell_price_gbp_mwh"] + df["buy_price_gbp_mwh"]) / 2
     return df
 

@@ -5,3 +5,6 @@ __pycache__/
 *.png
 .env
 .claude/
+
+# ...but do commit the curated charts embedded in the README
+!assets/*.png

@@ -4,6 +4,36 @@ Dated record of key decisions and findings as the project develops.
 
 ---
 
+## 2026-06-16 — Pre-publish polish (dashboard + duration analysis)
+
+Round of improvements before publishing, chosen for value-for-effort with no destabilising of headline numbers.
+
+### Single imbalance pricing (credibility fix)
+Verified from the data that `systemSellPrice == systemBuyPrice` in **all 17,520 rows**. GB has used a single cash-out (imbalance) price since 2015 (BSC mod P305), so the earlier "SSP vs SBP spread" framing was wrong. Corrected the README and `fetch_prices.py` comments; the `mid_price` column is simply the single imbalance price (kept as-is, no number change).
+
+### Verified the 8 Jan scarcity spike is real
+The single biggest day (£245,881, ~19% of the annual oracle total) is driven by prices pinned at **£2,900/MWh across periods 31–38 (14:00–17:30)** on 8 Jan — a genuine cold, low-wind evening scarcity event, not a data artefact. Year max = £2,900 at that timestamp. Headline £65,179/MW/yr holds.
+
+### Duration sensitivity (new analysis — `duration_sweep.py`)
+Reran the oracle at 1h/2h/4h, power fixed at 50 MW:
+- 1h (50 MWh): £36,010/MW/yr — £36,010/MWh-cap
+- 2h (100 MWh): £65,179/MW/yr — £32,589/MWh-cap (base)
+- 4h (200 MWh): £111,395/MW/yr (+71%) — £27,849/MWh-cap
+Per-MW revenue rises with duration (captures more of each spike); per-MWh-of-capacity falls (diminishing returns). This is the live GB 2h-vs-4h trade-off. Does not change existing headline numbers; adds new ones.
+
+### Dashboard refinements
+- Capped the daily-P&L y-axis at £40k and added a self-contained canvas plugin (no extra CDN) labelling the off-scale 8 Jan spike, so the rest of the year is legible.
+- Added a fourth chart (duration sweep, dual y-axis) computed at build time from `prices_2025-all.csv`.
+
+### Repo presentation
+Added `requirements.txt` (pinned), MIT `LICENSE`, and an `assets/` folder of committed charts embedded in the README (`.gitignore` updated to allow `assets/*.png` while still ignoring other PNGs).
+
+### Deferred to a v2 (deliberately not done today)
+- Replace the implied £15k "achieved arbitrage" with a computed no-foresight/day-ahead model (would change the 23% headline — wanted stable numbers for publish).
+- Switch imbalance → Market Index (day-ahead) prices for a more defensible ceiling.
+
+---
+
 ## 2026-06-16 — Initial build
 
 ### Data source: Elexon Insights API
