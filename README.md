@@ -107,12 +107,54 @@ No operator captures the full spread: forecasts are imperfect and the largest sp
 
 ---
 
+## Cycling sensitivity (1 vs 2 cycles/day)
+
+`cycles_sweep.py` relaxes the one-cycle-per-day cap. A second daily cycle exploits the next-best spread, lifting the ceiling from £65,179 to **£111,395/MW/yr (+71%)**.
+
+| Cycle cap | £/MW/year | vs 1 cycle |
+|---|---|---|
+| 1 cycle/day | £65,179 | (base) |
+| 2 cycles/day | £111,395 | +71% |
+
+**Note the equivalence:** a 2-hour battery cycling *twice* captures the same 8 cheapest + 8 dearest half-hours as a 4-hour battery cycling *once* — hence the identical £111,395. The difference is in the cost base: extra cycles buy that revenue with **battery wear** rather than extra **capex**. Warranties are written around a fixed number of equivalent full cycles per year, so much of the uplift can be eaten by degradation — which is why the base case stays at 1 cycle/day.
+
+![Arbitrage by cycle cap](assets/cycles_sweep.png)
+
+---
+
+## How loose is the upper bound? (ordering-constrained oracle)
+
+The greedy model takes the 4 cheapest and 4 dearest half-hours regardless of *when* they occur — so it can implicitly "sell before it buys", which a battery starting empty cannot do. `ordering_oracle.py` computes the true state-of-charge-respecting optimum with a small dynamic program and compares:
+
+| Model | £/MW/year |
+|---|---|
+| Greedy (base, ignores order) | £65,179 |
+| Ordering-constrained optimum | £62,487 |
+
+The greedy headline overstates by just **4.1%**. On most days the cheapest periods already precede the dearest (overnight trough → evening peak), so ordering rarely binds — confirming the £65,179 figure is a genuine, only-modestly-loose upper bound on this axis.
+
+![Greedy vs ordering-constrained](assets/ordering_oracle.png)
+
+---
+
+## Tests
+
+`test_arbitrage.py` runs a set of synthetic-data sanity checks on the core logic (RTE application, greedy-vs-ordered relationships, the cycle monotonicity, and the settlement-period→UTC mapping). No downloaded data needed, so it runs in CI on a clean checkout:
+
+```bash
+python test_arbitrage.py
+```
+
+A GitHub Actions workflow (`.github/workflows/tests.yml`) runs it on every push.
+
+---
+
 ## Caveats
 
 - **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. Day-ahead price forecasting typically captures 60–80% of the oracle spread.
 - **Imbalance prices are more volatile than traded prices.** Using day-ahead or intraday market prices would produce a lower, cleaner arbitrage estimate. The £65k figure should be read as an imbalance-price upper bound, not a day-ahead arbitrage estimate.
 - **Clock-change days skipped.** 30 March (46 periods, BST transition) and 26 October (50 periods, GMT transition) are excluded — 2 of 365 days.
-- **One-cycle-per-day cap.** The model does not allow partial cycles or multiple cycles, even on days with multiple price spikes.
+- **One-cycle-per-day cap.** The base model does not allow partial or multiple cycles. The cost of this assumption is quantified in the cycling-sensitivity section (a 2nd cycle adds +71% but doubles wear); the cap is retained to reflect realistic warranty/degradation limits.
 - **The real-world revenue stack is benchmark-based, not computed.** The £72k/MW figure and its breakdown come from published industry sources (see the table above), not from raw market data. The "achieved arbitrage" line (£15k) is itself a benchmark estimate, internally consistent with the ~23% capture rate but not independently derived here.
 
 ---
@@ -140,8 +182,17 @@ python revenue_comparison.py
 # 6. Duration sensitivity sweep (1h / 2h / 4h)
 python duration_sweep.py
 
-# 7. Build the self-contained HTML dashboard (opens in your browser)
+# 7. Cycling sensitivity (1 vs 2 cycles/day)
+python cycles_sweep.py
+
+# 8. How loose is the upper bound? (ordering-constrained oracle)
+python ordering_oracle.py
+
+# 9. Build the self-contained HTML dashboard (opens in your browser)
 python build_dashboard.py
+
+# Run the sanity tests
+python test_arbitrage.py
 ```
 
 Outputs are saved to `data/` (gitignored — re-fetch locally):
@@ -151,6 +202,8 @@ Outputs are saved to `data/` (gitignored — re-fetch locally):
 - `data/daily_pnl_plot.png` — full-year arbitrage chart
 - `data/revenue_comparison.png` — arbitrage ceiling vs real revenue stack
 - `data/duration_sweep.png` — revenue by battery duration
+- `data/cycles_sweep.png` — revenue by daily cycle cap
+- `data/ordering_oracle.png` — greedy vs ordering-constrained optimum
 
 `dashboard.html` (project root) is a single self-contained file with all data embedded — open it directly in any browser.
 
@@ -164,9 +217,13 @@ bess-arbitrage/
 ├── simulate_arbitrage.py   # Oracle arbitrage model → daily P&L + chart
 ├── revenue_comparison.py   # Arbitrage ceiling vs real revenue stack → chart
 ├── duration_sweep.py       # Arbitrage by battery duration (1h/2h/4h) → chart
+├── cycles_sweep.py         # Arbitrage by daily cycle cap (1 vs 2/day) → chart
+├── ordering_oracle.py      # Ordering-constrained optimum (DP) vs greedy → chart
+├── test_arbitrage.py       # Synthetic-data sanity tests
 ├── build_dashboard.py      # Reads CSVs → self-contained dashboard.html
 ├── dashboard.html          # Single-file interactive dashboard (generated)
 ├── requirements.txt        # Pinned dependencies
+├── .github/workflows/      # CI: runs the tests on every push
 ├── assets/                 # Curated charts embedded in this README
 ├── data/                   # Downloaded prices and results (gitignored)
 ├── venv/                   # Python virtual environment (gitignored)

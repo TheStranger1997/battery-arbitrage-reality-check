@@ -4,6 +4,24 @@ Dated record of key decisions and findings as the project develops.
 
 ---
 
+## 2026-06-16 — Sensitivity analyses + tests (items 8, 9, 10)
+
+Additive analyses around the base case. The £65,179/MW headline (2h, 1 cycle, imbalance, greedy) is preserved; these add context rather than replace it.
+
+### Cycling sensitivity (`cycles_sweep.py`)
+1 vs 2 cycles/day: £65,179 → £111,395/MW/yr (+71%). Notable equivalence: a 2h battery cycling twice selects the same 8 cheapest + 8 dearest half-hours as a 4h battery cycling once, hence the identical £111,395 — same revenue, but bought with wear (degradation) instead of capex (steel). Base case stays at 1 cycle/day to reflect warranty/degradation limits.
+
+### Ordering-constrained oracle (`ordering_oracle.py`)
+Built a per-day DP that enforces state-of-charge ordering (can't discharge before charging). Greedy £65,179 vs ordering-constrained £62,487 — the greedy upper bound overstates by only **4.1%** (ordering binds on 164/363 days but weakly). Validates that the headline is a genuine, only-modestly-loose upper bound.
+
+### Tests + CI (`test_arbitrage.py`, `.github/workflows/tests.yml`)
+10 synthetic-data sanity checks (no downloaded data needed): RTE application, greedy==ordered when trough precedes peak, ordered<greedy when peak precedes trough, ordered≤greedy always, flat-day→0, cycle monotonicity, and the settlement-period→UTC mapping. All pass. GitHub Actions runs them on every push.
+
+### Co-author trailer
+Scrubbed `Co-Authored-By` from all commit messages via `git filter-branch` (history not yet pushed).
+
+---
+
 ## 2026-06-16 — Pre-publish polish (dashboard + duration analysis)
 
 Round of improvements before publishing, chosen for value-for-effort with no destabilising of headline numbers.
