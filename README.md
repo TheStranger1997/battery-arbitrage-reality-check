@@ -137,6 +137,24 @@ The greedy headline overstates by just **4.1%**. On most days the cheapest perio
 
 ---
 
+## Imbalance vs traded wholesale prices (the biggest caveat, quantified)
+
+The base model runs on **imbalance (cash-out) prices**, which are far more volatile than the prices a battery actually trades against. `market_index_compare.py` reruns the oracle on the **Market Index Price (MID)** — the volume-weighted price of real short-term wholesale trades (Elexon `datasets/MID`, volume-weighted across the APX and N2EX providers) — and compares like-for-like.
+
+MID has untraded (zero-volume) overnight periods, so only 206 days have a complete 48-period profile. To avoid conflating "lower prices" with "fewer days", both series are measured over those **same 206 days** and annualised:
+
+| Price series | Over 206 common days | Annualised £/MW/yr |
+|---|---|---|
+| Imbalance (cash-out) | £35,610 | £63,095 |
+| Market Index (traded wholesale) | £20,313 | £35,991 |
+| **MID as share of imbalance** | **57%** | |
+
+The annualised common-day imbalance figure (£63,095) is close to the full-year headline (£65,179), confirming the 206 days are broadly representative. The takeaway: stripping out the £2,900/MWh cash-out spikes roughly halves the ceiling. **Realistic perfect-foresight wholesale arbitrage is closer to ~£36k/MW than to the £65k imbalance headline** — the clearest single reason to read £65,179 as an upper bound, not an achievable target.
+
+![Imbalance vs Market Index ceiling](assets/market_index_compare.png)
+
+---
+
 ## Tests
 
 `test_arbitrage.py` runs a set of synthetic-data sanity checks on the core logic (RTE application, greedy-vs-ordered relationships, the cycle monotonicity, and the settlement-period→UTC mapping). No downloaded data needed, so it runs in CI on a clean checkout:
@@ -152,7 +170,7 @@ A GitHub Actions workflow (`.github/workflows/tests.yml`) runs it on every push.
 ## Caveats
 
 - **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. Day-ahead price forecasting typically captures 60–80% of the oracle spread.
-- **Imbalance prices are more volatile than traded prices.** Using day-ahead or intraday market prices would produce a lower, cleaner arbitrage estimate. The £65k figure should be read as an imbalance-price upper bound, not a day-ahead arbitrage estimate.
+- **Imbalance prices are more volatile than traded prices.** This is now quantified (see the Market Index section): on like-for-like days, the traded-wholesale ceiling is ~57% of the imbalance ceiling (~£36k vs ~£63k annualised). The £65k headline is an imbalance-price upper bound, not a realistic day-ahead arbitrage estimate.
 - **Clock-change days skipped.** 30 March (46 periods, BST transition) and 26 October (50 periods, GMT transition) are excluded — 2 of 365 days.
 - **One-cycle-per-day cap.** The base model does not allow partial or multiple cycles. The cost of this assumption is quantified in the cycling-sensitivity section (a 2nd cycle adds +71% but doubles wear); the cap is retained to reflect realistic warranty/degradation limits.
 - **The real-world revenue stack is benchmark-based, not computed.** The £72k/MW figure and its breakdown come from published industry sources (see the table above), not from raw market data. The "achieved arbitrage" line (£15k) is itself a benchmark estimate, internally consistent with the ~23% capture rate but not independently derived here.
@@ -188,7 +206,10 @@ python cycles_sweep.py
 # 8. How loose is the upper bound? (ordering-constrained oracle)
 python ordering_oracle.py
 
-# 9. Build the self-contained HTML dashboard (opens in your browser)
+# 9. Imbalance vs traded wholesale (Market Index) comparison
+python market_index_compare.py
+
+# 10. Build the self-contained HTML dashboard (opens in your browser)
 python build_dashboard.py
 
 # Run the sanity tests
@@ -204,6 +225,8 @@ Outputs are saved to `data/` (gitignored — re-fetch locally):
 - `data/duration_sweep.png` — revenue by battery duration
 - `data/cycles_sweep.png` — revenue by daily cycle cap
 - `data/ordering_oracle.png` — greedy vs ordering-constrained optimum
+- `data/mid_2025-all.csv` — cached Market Index prices
+- `data/market_index_compare.png` — imbalance vs traded-wholesale ceiling
 
 `dashboard.html` (project root) is a single self-contained file with all data embedded — open it directly in any browser.
 
@@ -219,6 +242,7 @@ bess-arbitrage/
 ├── duration_sweep.py       # Arbitrage by battery duration (1h/2h/4h) → chart
 ├── cycles_sweep.py         # Arbitrage by daily cycle cap (1 vs 2/day) → chart
 ├── ordering_oracle.py      # Ordering-constrained optimum (DP) vs greedy → chart
+├── market_index_compare.py # Imbalance vs traded-wholesale (MID) ceiling → chart
 ├── test_arbitrage.py       # Synthetic-data sanity tests
 ├── build_dashboard.py      # Reads CSVs → self-contained dashboard.html
 ├── dashboard.html          # Single-file interactive dashboard (generated)
@@ -237,5 +261,6 @@ bess-arbitrage/
 
 - ~~Compare oracle arbitrage revenues against real GB BESS revenue streams (BM, FFR, DC, Capacity Market).~~ ✅ Done — see `revenue_comparison.py`.
 - ~~Build an interactive dashboard.~~ ✅ Done — see `build_dashboard.py` / `dashboard.html`.
-- Explore a heuristic or day-ahead forecast model to estimate *achievable* arbitrage (replacing the implied £15k figure with a computed one).
+- ~~Compare imbalance vs traded-wholesale (day-ahead-ish) prices.~~ ✅ Done — see `market_index_compare.py`.
+- Add a *forecast-based achievable* model (no perfect foresight) to estimate realised capture, replacing the implied £15k figure with a computed one.
 - Optionally replace benchmark revenue figures with values computed from raw Elexon BM data.

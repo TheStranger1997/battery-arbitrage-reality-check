@@ -4,6 +4,21 @@ Dated record of key decisions and findings as the project develops.
 
 ---
 
+## 2026-06-16 — Imbalance vs traded wholesale prices (item 7)
+
+`market_index_compare.py`. Reran the oracle on the Market Index Price (MID, Elexon `datasets/MID`) — the volume-weighted price of real short-term wholesale trades — as a more defensible proxy for what a battery actually trades against than imbalance cash-out prices.
+
+**Data handling:** MID is published per period by two providers (APXMIDP, N2EXMIDP); N2EX frequently reports zero volume, so prices are **volume-weighted** across providers and zero-volume periods are dropped. The `from`/`to` query filters on `startTime` and the API rejects wide ranges (400), so fetch is per-day; cached to `data/mid_2025-all.csv`.
+
+**Apples-to-apples fix:** dropping untraded periods leaves only 206 days with a complete 48-period MID profile (vs 363 for imbalance). Comparing the raw sums would conflate price level with day count (initial naive run showed a misleading 31%). Fixed by measuring BOTH series over the same 206 days and annualising:
+- Imbalance: £35,610/MW over common days → £63,095/MW annualised
+- MID: £20,313/MW over common days → £35,991/MW annualised
+- MID is **57%** of the imbalance ceiling on identical days.
+
+The annualised common-day imbalance (£63,095) ≈ the full-year headline (£65,179), so the 206 days are representative. **Conclusion:** realistic perfect-foresight wholesale arbitrage is ~£36k/MW, not £65k — the imbalance headline's scarcity tail roughly doubles it. This is the single most important caveat on the £65k figure, now quantified. Kept the £65k as the documented base/headline; this is an additive reality-check.
+
+---
+
 ## 2026-06-16 — Sensitivity analyses + tests (items 8, 9, 10)
 
 Additive analyses around the base case. The £65,179/MW headline (2h, 1 cycle, imbalance, greedy) is preserved; these add context rather than replace it.
