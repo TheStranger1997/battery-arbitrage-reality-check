@@ -52,10 +52,13 @@ N                     = 4                 # periods per charge / discharge (2h)
 LOOKBACK_7D = 7   # days in the trailing-average forecast
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-PRICES_FILE   = os.path.join("data", "prices_2025-all.csv")
-ORACLE_FILE   = os.path.join("data", "arbitrage_results.csv")
-RESULTS_FILE  = os.path.join("data", "forecast_results.csv")
-PLOT_FILE     = os.path.join("data", "forecast_arbitrage.png")
+PRICES_FILE        = os.path.join("data", "prices_2025-all.csv")
+ORACLE_FILE        = os.path.join("data", "arbitrage_results.csv")
+RESULTS_FILE       = os.path.join("data", "forecast_results.csv")
+PLOT_FILE          = os.path.join("data", "forecast_arbitrage.png")
+SWEEP_FILE         = os.path.join("data", "lookback_sweep.csv")
+SWEEP_PLOT_DATA    = os.path.join("data", "lookback_sweep.png")
+SWEEP_PLOT_ASSETS  = os.path.join("assets", "lookback_sweep.png")
 
 
 def realised_net(actual: list[float], charge_idx, discharge_idx) -> float:
@@ -115,6 +118,27 @@ def run_forecast_model(days: list[tuple[str, list[float]]], lookback: int):
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"])
     return df.set_index("date").sort_index()
+
+
+def run_sweep(days: list, oracle_per_mw: float,
+              lookbacks: tuple = (1, 3, 7, 14, 30)) -> pd.DataFrame:
+    """
+    Run the forecast model at several lookback windows and return a summary.
+    Used to justify the 7-day headline choice rather than hard-coding it.
+    """
+    rows = []
+    for lb in lookbacks:
+        df      = run_forecast_model(days, lookback=lb)
+        per_mw  = df["realised_net_gbp"].sum() / POWER_MW
+        capture = per_mw / oracle_per_mw
+        n_loss  = int((df["realised_net_gbp"] < 0).sum())
+        rows.append({
+            "lookback_days": lb,
+            "per_mw_gbp":   round(per_mw),
+            "capture_pct":  round(capture * 100, 1),
+            "loss_days":    n_loss,
+        })
+    return pd.DataFrame(rows)
 
 
 def main():
@@ -179,6 +203,39 @@ def main():
     print("  overnight-to-peak spread but misses the scarcity tail that makes up")
     print("  much of the oracle total. This is the realistic, computed answer —")
     print("  it replaces the previously implied ~£15k 'achieved arbitrage'.")
+
+    # ── Lookback sensitivity sweep ───────────────────────────────────────────────
+    print("\nRunning lookback sensitivity sweep (1, 3, 7, 14, 30 days)...")
+    sweep = run_sweep(days, oracle_per_mw)
+    sweep.to_csv(SWEEP_FILE, index=False)
+
+    print(f"\n  {'Lookback (days)':>16}{'£/MW/yr':>12}{'Capture':>10}{'Loss days':>11}")
+    for _, row in sweep.iterrows():
+        marker = "  ← headline" if int(row["lookback_days"]) == LOOKBACK_7D else ""
+        print(f"  {int(row['lookback_days']):>16}  £{int(row['per_mw_gbp']):>8,}"
+              f"  {row['capture_pct']:>7.1f}%  {int(row['loss_days']):>9}{marker}")
+
+    fig2, ax1 = plt.subplots(figsize=(8, 5))
+    ax2 = ax1.twinx()
+    lb_labels = [str(int(lb)) for lb in sweep["lookback_days"]]
+    bars = ax1.bar(lb_labels, sweep["per_mw_gbp"], color="#2f6f9f", width=0.5, alpha=0.85)
+    ax1.bar_label(bars, labels=[f"£{int(v):,.0f}" for v in sweep["per_mw_gbp"]],
+                  padding=3, fontsize=9)
+    ax2.plot(lb_labels, sweep["capture_pct"], color="#e08a1e", marker="o",
+             linewidth=2, markersize=7, label="Capture rate (%)")
+    ax1.set_xlabel("Forecast lookback (days)")
+    ax1.set_ylabel("Achievable arbitrage (£/MW/yr)", color="#2f6f9f")
+    ax2.set_ylabel("Capture rate (% of oracle ceiling)", color="#e08a1e")
+    ax2.set_ylim(0, max(sweep["capture_pct"]) * 1.5)
+    ax1.set_title("Forecast lookback sensitivity — how many days of history?\n"
+                  "(2025, 50 MW / 2h, imbalance prices)")
+    ax2.legend(loc="lower right")
+    plt.tight_layout()
+    for dest in (SWEEP_PLOT_DATA, SWEEP_PLOT_ASSETS):
+        plt.savefig(dest, dpi=150)
+    plt.close()
+    print(f"\nSweep chart saved to {SWEEP_PLOT_ASSETS}")
+    print(f"Sweep data saved to {SWEEP_FILE}")
 
     # ── Chart: oracle ceiling vs achievable, with capture rate ──────────────────
     fig, ax = plt.subplots(figsize=(7.5, 5.5))

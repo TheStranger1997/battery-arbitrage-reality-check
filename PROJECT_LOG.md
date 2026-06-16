@@ -4,6 +4,20 @@ Dated record of key decisions and findings as the project develops.
 
 ---
 
+## 2026-06-16 — Lookback sensitivity sweep + seasonal breakdown + methodology explainer
+
+Three additions to close the main gaps identified after the computed-capture-rate commit.
+
+**Lookback sensitivity sweep (`forecast_arbitrage.py`):** `run_sweep()` runs the forecast model at lookbacks of 1, 3, 7, 14, and 30 days and saves results to `data/lookback_sweep.csv` + `assets/lookback_sweep.png`. Key finding: 7-day is the genuine optimum — shorter windows miss the time-of-day shape; longer windows over-smooth. The curve peaks and then falls back to ~32% at 14–30 days. This justifies the 7-day headline choice empirically rather than by assertion.
+
+**Seasonal breakdown (`build_dashboard.py`):** `build_monthly_breakdown()` groups oracle and forecast results by calendar month from the existing CSVs and returns `{months, oracle, achieved, capturePct}`. Exposed in the dashboard as Chart 6 — a grouped-bar chart with a capture-rate line. January oracle is dominant (scarcity spike); summer months show higher capture (routine diurnal spread). Annual aggregate buried this finding.
+
+**Methodology explainer (dashboard HTML):** Added a `<details><summary>How this works</summary>` block between the KPI section and the first chart. Three columns — Oracle (red), Achieved (blue), Real stack (green) — each with a plain-English explanation. Closes the gap for non-technical readers who couldn't tell what "no-foresight forecast" meant. Also updated the eyebrow text to include "data: Jan–Dec 2025".
+
+Dashboard now has 6 charts (was 4). All 13 tests still pass. Headlines unchanged.
+
+---
+
 ## 2026-06-16 — Forecast-based achievable arbitrage (computed capture rate)
 
 `forecast_arbitrage.py`. Replaced the project's last *assumed* number — the implied £15k "achieved wholesale arbitrage" (oracle × a guessed ~23% capture) — with a **computed** figure from a no-perfect-foresight model.

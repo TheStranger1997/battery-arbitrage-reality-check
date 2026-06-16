@@ -21,6 +21,7 @@ import webbrowser
 PRICES_MONTH  = os.path.join("data", "prices_2025-05.csv")
 RESULTS_FILE  = os.path.join("data", "arbitrage_results.csv")
 FORECAST_FILE = os.path.join("data", "forecast_results.csv")
+SWEEP_FILE    = os.path.join("data", "lookback_sweep.csv")
 OUTPUT_HTML   = "dashboard.html"
 
 SAMPLE_DATE  = "2025-05-14"   # a Wednesday — typical weekday price shape
@@ -144,6 +145,46 @@ def build_duration() -> dict:
     return {"labels": ["1-hour", "2-hour", "4-hour"], "perMw": per_mw, "perMwh": per_mwh}
 
 
+def build_lookback_sweep() -> dict:
+    """Load the lookback sensitivity sweep for the dashboard chart."""
+    df = pd.read_csv(SWEEP_FILE)
+    return {
+        "lookbacks":   [str(int(lb)) for lb in df["lookback_days"]],
+        "perMw":       df["per_mw_gbp"].tolist(),
+        "capturePct":  df["capture_pct"].tolist(),
+    }
+
+
+def build_monthly_breakdown() -> dict:
+    """Oracle and achieved arbitrage per calendar month."""
+    oracle   = pd.read_csv(RESULTS_FILE,  parse_dates=["date"])
+    forecast = pd.read_csv(FORECAST_FILE, parse_dates=["date"])
+
+    oracle["month"]   = oracle["date"].dt.month
+    forecast["month"] = forecast["date"].dt.month
+
+    months       = list(range(1, 13))
+    month_labels = ["Jan","Feb","Mar","Apr","May","Jun",
+                    "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    o_by_m = oracle.groupby("month")["net_revenue_gbp"].sum()   / POWER_MW
+    a_by_m = forecast.groupby("month")["realised_net_gbp"].sum() / POWER_MW
+
+    oracle_vals   = [round(o_by_m.get(m, 0))   for m in months]
+    achieved_vals = [round(a_by_m.get(m, 0))   for m in months]
+    capture_pct   = [
+        round(a_by_m.get(m, 0) / o_by_m.get(m, 1) * 100, 1) if o_by_m.get(m, 0) > 0 else 0
+        for m in months
+    ]
+
+    return {
+        "months":     month_labels,
+        "oracle":     oracle_vals,
+        "achieved":   achieved_vals,
+        "capturePct": capture_pct,
+    }
+
+
 def main():
     sample_day = build_sample_day()
     daily_pnl  = build_daily_pnl()
@@ -152,6 +193,8 @@ def main():
     kpis       = build_kpis(daily_pnl, stack_rows, achieved)
     stack      = build_stack(stack_rows)
     duration   = build_duration()
+    sweep      = build_lookback_sweep()
+    monthly    = build_monthly_breakdown()
 
     payload = {
         "sampleDate": SAMPLE_DATE,
@@ -161,6 +204,8 @@ def main():
         "duration":   duration,
         "kpis":       kpis,
         "oracle":     kpis["oracle_per_mw"],
+        "sweep":      sweep,
+        "monthly":    monthly,
     }
 
     html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload))
@@ -285,16 +330,33 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   footer .sources { margin-bottom: 8px; }
   footer b { color: var(--ink); font-weight: 600; }
 
+  .method-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 24px; margin-top: 22px;
+  }
+  .method-box summary {
+    font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer;
+    user-select: none; letter-spacing: .02em;
+  }
+  .method-box summary::-webkit-details-marker { display: none; }
+  .method-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+    margin-top: 18px;
+  }
+  .method-label { font-size: 13px; font-weight: 700; margin: 0 0 6px; }
+  .method-grid p { font-size: 14px; color: var(--muted); margin: 0 0 6px; }
+
   @media (max-width: 720px) {
     .kpis { grid-template-columns: repeat(2, 1fr); }
     h1 { font-size: 32px; }
+    .method-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <p class="eyebrow">GB power markets · weekend build</p>
+  <p class="eyebrow">GB power markets · weekend build · data: Jan–Dec 2025</p>
   <h1>Battery arbitrage reality check</h1>
   <p class="subhead">How much could a grid-scale GB battery earn from wholesale price arbitrage alone, and how does that compare with what batteries actually earn across every revenue stream?</p>
   <div class="spec">50 MW / 100 MWh · 2-hour · 85% round-trip · 1 cycle/day cap</div>
@@ -308,7 +370,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="kpi">
       <div class="label">Achieved (modelled)</div>
       <div class="value">£__KPI_ACHIEVED__</div>
-      <div class="unit">/MW/yr · no-foresight forecast</div>
+      <div class="unit">/MW/yr · 7-day shape forecast</div>
     </div>
     <div class="kpi k-real">
       <div class="label">Real GB stack</div>
@@ -321,6 +383,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <div class="unit">forecasting is hard</div>
     </div>
   </div>
+
+  <details class="method-box">
+    <summary>How this works ▸</summary>
+    <div class="method-grid">
+      <div>
+        <p class="method-label" style="color:var(--red)">Oracle (red KPI)</p>
+        <p>Perfect foresight — the model is told all 48 half-hourly prices before the day starts, charges in the 4 cheapest half-hours, and discharges in the 4 most expensive. This is a <strong>theoretical upper bound</strong>, not a tradeable strategy. No real desk knows tomorrow's prices in full.</p>
+      </div>
+      <div>
+        <p class="method-label" style="color:#2f6f9f">Achieved (modelled)</p>
+        <p>Each morning the battery commits its windows based only on the <strong>average price shape of the last 7 days</strong> — no future data. It then settles at today's real prices at those committed periods, loss days included. This is the closest thing to what a simple systematic desk could actually do.</p>
+      </div>
+      <div>
+        <p class="method-label" style="color:var(--green)">Real GB stack (green KPI)</p>
+        <p>What GB grid-scale batteries actually earned in 2025 across <strong>all revenue streams</strong>: Balancing Mechanism dispatch, frequency response (DC etc.), the Capacity Market, and small other streams — plus the computed achievable arbitrage. The four benchmark streams are from published sources (Modo Energy, NESO, Cornwall Insight), not computed from raw data.</p>
+      </div>
+    </div>
+  </details>
 
   <div class="card">
     <h2>Sample day price profile — <span id="sampleDateLabel"></span></h2>
@@ -349,6 +429,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <h2>How much does duration matter?</h2>
     <p class="lead">The same oracle model at 1-, 2- and 4-hour durations (power fixed at 50 MW). Revenue <b>per MW</b> rises with duration, since a 4-hour battery captures more of each spike, but revenue <b>per MWh of capacity</b> falls as the extra storage is dispatched onto shallower parts of the price curve. This is the live GB "2h vs 4h" trade-off.</p>
     <div class="chart-box h-stack"><canvas id="durationChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>Forecast sensitivity — how many days of history?</h2>
+    <p class="lead">The achieved figure uses a 7-day lookback. This chart shows the sensitivity: revenue and capture rate across 1, 3, 7, 14, and 30 days of trailing history. The 7-day window is the genuine optimum for 2025 — shorter windows miss the time-of-day shape; longer windows average out too much recent structure.</p>
+    <div class="chart-box h-stack"><canvas id="sweepChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>Seasonal pattern — oracle vs achieved by month</h2>
+    <p class="lead">Annual totals hide the seasonal story. January's oracle is huge (the 8 Jan scarcity spike); the forecast model captures a small fraction because extreme spikes don't repeat day-to-day. Summer months show higher capture rates — routine diurnal spreads are more forecastable than winter scarcity events.</p>
+    <div class="chart-box h-stack"><canvas id="monthlyChart"></canvas></div>
   </div>
 
   <div class="takeaway">
@@ -559,6 +651,89 @@ new Chart(document.getElementById("durationChart"), {
       y1: { position: "right", grid: { drawOnChartArea: false }, beginAtZero: true,
             title: { display: true, text: "£/MWh-cap/yr", color: ACCENT },
             ticks: { font: { family: MONO }, callback: (v) => "£" + (v/1000) + "k" } }
+    }
+  }
+});
+
+// ── Chart 5: forecast lookback sensitivity ──────────────────────────────────
+const sw = DATA.sweep;
+new Chart(document.getElementById("sweepChart"), {
+  type: "bar",
+  data: {
+    labels: sw.lookbacks.map(lb => lb + "-day"),
+    datasets: [
+      { label: "Achievable revenue (£/MW/yr)", data: sw.perMw,
+        backgroundColor: ACCENT, yAxisID: "y", borderWidth: 0,
+        categoryPercentage: 0.6, barPercentage: 0.9 },
+      { label: "Capture rate (%)", data: sw.capturePct,
+        type: "line", yAxisID: "y1",
+        borderColor: ORANGE, backgroundColor: "transparent",
+        pointBackgroundColor: ORANGE, pointRadius: 6, pointHoverRadius: 8,
+        borderWidth: 2.5, tension: 0.3 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "bottom", labels: { boxWidth: 12, padding: 14, font: { size: 12 } } },
+      tooltip: { callbacks: {
+        label: (c) => c.dataset.yAxisID === "y"
+          ? gbp(c.raw) + "/MW/yr"
+          : c.raw.toFixed(1) + "% of oracle ceiling"
+      }}
+    },
+    scales: {
+      x: { grid: { display: false } },
+      y:  { position: "left",  grid: { color: LINE }, beginAtZero: true,
+            title: { display: true, text: "£/MW/yr", color: ACCENT },
+            ticks: { font: { family: MONO }, callback: (v) => "£" + (v/1000) + "k" } },
+      y1: { position: "right", grid: { drawOnChartArea: false }, beginAtZero: true,
+            max: 60,
+            title: { display: true, text: "Capture rate (%)", color: ORANGE },
+            ticks: { font: { family: MONO }, callback: (v) => v + "%" } }
+    }
+  }
+});
+
+// ── Chart 6: monthly oracle vs achieved ─────────────────────────────────────
+const mo = DATA.monthly;
+new Chart(document.getElementById("monthlyChart"), {
+  type: "bar",
+  data: {
+    labels: mo.months,
+    datasets: [
+      { label: "Oracle (perfect foresight)", data: mo.oracle,
+        backgroundColor: RED + "cc", yAxisID: "y", borderWidth: 0,
+        categoryPercentage: 0.75, barPercentage: 0.55 },
+      { label: "Achieved (7-day forecast)", data: mo.achieved,
+        backgroundColor: ACCENT + "cc", yAxisID: "y", borderWidth: 0,
+        categoryPercentage: 0.75, barPercentage: 0.55 },
+      { label: "Capture rate (%)", data: mo.capturePct,
+        type: "line", yAxisID: "y1",
+        borderColor: ORANGE, backgroundColor: "transparent",
+        pointBackgroundColor: ORANGE, pointRadius: 4, pointHoverRadius: 6,
+        borderWidth: 2, tension: 0.3 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "bottom", labels: { boxWidth: 12, padding: 14, font: { size: 12 } } },
+      tooltip: { callbacks: {
+        label: (c) => c.dataset.yAxisID === "y"
+          ? c.dataset.label + ": " + gbp(c.raw) + "/MW"
+          : c.raw.toFixed(1) + "% capture"
+      }}
+    },
+    scales: {
+      x: { grid: { display: false } },
+      y:  { position: "left",  grid: { color: LINE }, beginAtZero: true,
+            title: { display: true, text: "£/MW (monthly)", color: MUTED },
+            ticks: { font: { family: MONO }, callback: (v) => "£" + (v/1000) + "k" } },
+      y1: { position: "right", grid: { drawOnChartArea: false }, beginAtZero: true,
+            max: 100,
+            title: { display: true, text: "Capture rate (%)", color: ORANGE },
+            ticks: { font: { family: MONO }, callback: (v) => v + "%" } }
     }
   }
 });
