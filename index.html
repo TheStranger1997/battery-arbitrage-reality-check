@@ -1,179 +1,4 @@
-"""
-build_dashboard.py
-------------------
-Builds a single, self-contained dashboard.html from the saved CSVs.
-
-Real data (sample-day prices, daily P&L, revenue stack) is read at build time
-and embedded directly into the HTML as JSON literals, so the resulting file
-opens in any browser with no server and no network access except the Chart.js
-CDN. Run this whenever the underlying data changes:
-
-    python build_dashboard.py
-"""
-
-import pandas as pd
-import json
-import os
-import webbrowser
-
-# ── Inputs ───────────────────────────────────────────────────────────────────
-
-PRICES_MONTH = os.path.join("data", "prices_2025-05.csv")
-RESULTS_FILE = os.path.join("data", "arbitrage_results.csv")
-OUTPUT_HTML  = "dashboard.html"
-
-SAMPLE_DATE  = "2025-05-14"   # a Wednesday — typical weekday price shape
-POWER_MW     = 50
-
-# Number of half-hour periods charged / discharged per day (matches the model)
-PERIODS_PER_CYCLE = 4
-
-# Real-world GB BESS revenue stack (2025, £/MW/yr) — published benchmarks.
-# Order: bottom → top of the stacked bar.
-REVENUE_STACK = [
-    ("Balancing Mechanism",          28_000, "#2f6f9f"),
-    ("Frequency response (DC etc.)", 18_000, "#e08a1e"),
-    ("Wholesale arbitrage (achieved)", 15_000, "#3a9d5d"),
-    ("Capacity Market",               7_000, "#8a6bbf"),
-    ("Other (DM, DR, triad)",         4_000, "#9c6b58"),
-]
-ACHIEVED_ARBITRAGE = 15_000   # the "achieved wholesale" line, for the KPIs
-
-
-# ── Build the embedded data ──────────────────────────────────────────────────
-
-def build_sample_day() -> dict:
-    """48 half-hourly prices for the sample day, tagged charge/discharge/idle."""
-    df = pd.read_csv(PRICES_MONTH, parse_dates=["datetime_utc"])
-    day = df[df["settlement_date"] == SAMPLE_DATE].sort_values("datetime_utc")
-
-    prices = day["mid_price_gbp_mwh"].tolist()
-    times  = [t.strftime("%H:%M") for t in day["datetime_utc"]]
-
-    # Rank periods by price to find the cheapest (charge) and dearest (discharge)
-    order = sorted(range(len(prices)), key=lambda i: prices[i])
-    charge_idx    = set(order[:PERIODS_PER_CYCLE])
-    discharge_idx = set(order[-PERIODS_PER_CYCLE:])
-
-    roles = []
-    for i in range(len(prices)):
-        if i in charge_idx:
-            roles.append("charge")
-        elif i in discharge_idx:
-            roles.append("discharge")
-        else:
-            roles.append("idle")
-
-    return {"times": times, "prices": prices, "roles": roles}
-
-
-def build_daily_pnl() -> dict:
-    """Daily net revenue for 2025 from the simulation output."""
-    res = pd.read_csv(RESULTS_FILE, parse_dates=["date"]).sort_values("date")
-    return {
-        "dates": [d.strftime("%Y-%m-%d") for d in res["date"]],
-        "net":   [round(v, 0) for v in res["net_revenue_gbp"]],
-    }
-
-
-def build_kpis(daily_pnl: dict) -> dict:
-    oracle_per_mw = sum(daily_pnl["net"]) / POWER_MW
-    real_total    = sum(amount for _, amount, _ in REVENUE_STACK)
-    pct_of_ceiling = round(ACHIEVED_ARBITRAGE / oracle_per_mw * 100)
-    return {
-        "oracle_per_mw":  round(oracle_per_mw),
-        "achieved":       ACHIEVED_ARBITRAGE,
-        "real_total":     real_total,
-        "pct_of_ceiling": pct_of_ceiling,
-    }
-
-
-def build_stack() -> dict:
-    return {
-        "labels": [label for label, _, _ in REVENUE_STACK],
-        "values": [amount for _, amount, _ in REVENUE_STACK],
-        "colours": [colour for _, _, colour in REVENUE_STACK],
-    }
-
-
-def build_duration() -> dict:
-    """
-    Rerun the oracle model at 1h / 2h / 4h durations (power fixed at 50 MW)
-    to show the per-MW vs per-MWh-of-capacity trade-off. Computed here from the
-    full-year price file so the dashboard stays self-contained.
-    """
-    all_prices = os.path.join("data", "prices_2025-all.csv")
-    df = pd.read_csv(all_prices)
-    days = [g["mid_price_gbp_mwh"].reset_index(drop=True)
-            for _, g in df.groupby("settlement_date") if len(g) == 48]
-
-    energy_per_period = POWER_MW * 0.5          # 25 MWh per half-hour
-    energy_sold = energy_per_period * 0.85      # RTE applied at discharge
-
-    per_mw, per_mwh = [], []
-    for duration in (1, 2, 4):
-        capacity = POWER_MW * duration
-        n = int(capacity / energy_per_period)   # periods per cycle: 2 / 4 / 8
-        total = 0.0
-        for prices in days:
-            s = prices.sort_values()
-            net = (s.iloc[-n:] * energy_sold).sum() - (s.iloc[:n] * energy_per_period).sum()
-            if net > 0:
-                total += net
-        per_mw.append(round(total / POWER_MW))
-        per_mwh.append(round(total / capacity))
-
-    return {"labels": ["1-hour", "2-hour", "4-hour"], "perMw": per_mw, "perMwh": per_mwh}
-
-
-def main():
-    sample_day = build_sample_day()
-    daily_pnl  = build_daily_pnl()
-    kpis       = build_kpis(daily_pnl)
-    stack      = build_stack()
-    duration   = build_duration()
-
-    payload = {
-        "sampleDate": SAMPLE_DATE,
-        "sampleDay":  sample_day,
-        "dailyPnl":   daily_pnl,
-        "stack":      stack,
-        "duration":   duration,
-        "kpis":       kpis,
-        "oracle":     kpis["oracle_per_mw"],
-    }
-
-    html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload))
-    # KPI text values injected directly so they show even before JS runs
-    html = (html
-            .replace("__KPI_ORACLE__",   f"{kpis['oracle_per_mw']:,}")
-            .replace("__KPI_ACHIEVED__", f"{kpis['achieved']:,}")
-            .replace("__KPI_REAL__",     f"{kpis['real_total']:,}")
-            .replace("__KPI_PCT__",      f"{kpis['pct_of_ceiling']}"))
-
-    with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    # Also write index.html: this is what GitHub Pages serves at the site root,
-    # so the published URL shows the dashboard directly. Identical content.
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html)
-
-    abspath = os.path.abspath(OUTPUT_HTML)
-    print(f"Built {OUTPUT_HTML} and index.html (GitHub Pages entry point)")
-    print(f"  Oracle: £{kpis['oracle_per_mw']:,}/MW/yr | "
-          f"Achieved: £{kpis['achieved']:,} | "
-          f"Real: £{kpis['real_total']:,} | "
-          f"Achieved/ceiling: {kpis['pct_of_ceiling']}%")
-    print(f"  Sample day: {SAMPLE_DATE} ({len(sample_day['prices'])} periods)")
-    print(f"  Daily P&L points: {len(daily_pnl['net'])}")
-    webbrowser.open(f"file:///{abspath.replace(os.sep, '/')}")
-    print(f"Opened in browser: {abspath}")
-
-
-# ── HTML template (token __DATA__ replaced with embedded JSON) ───────────────
-
-HTML_TEMPLATE = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -282,22 +107,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="kpis">
     <div class="kpi k-oracle">
       <div class="label">Oracle arbitrage</div>
-      <div class="value">£__KPI_ORACLE__</div>
+      <div class="value">£65,179</div>
       <div class="unit">/MW/yr · perfect foresight</div>
     </div>
     <div class="kpi">
       <div class="label">Achieved (implied)</div>
-      <div class="value">£__KPI_ACHIEVED__</div>
+      <div class="value">£15,000</div>
       <div class="unit">/MW/yr · real capture</div>
     </div>
     <div class="kpi k-real">
       <div class="label">Real GB stack</div>
-      <div class="value">£__KPI_REAL__</div>
+      <div class="value">£72,000</div>
       <div class="unit">/MW/yr · all streams</div>
     </div>
     <div class="kpi">
       <div class="label">Achieved % of ceiling</div>
-      <div class="value">__KPI_PCT__%</div>
+      <div class="value">23%</div>
       <div class="unit">forecasting is hard</div>
     </div>
   </div>
@@ -334,8 +159,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="takeaway">
     <h2>Key takeaway</h2>
     <ul>
-      <li>Achieved wholesale arbitrage is only <b>~__KPI_PCT__%</b> of the theoretical maximum. Perfect foresight is impossible, and the biggest price spikes are nearly unforecastable.</li>
-      <li>Even the theoretical maximum (<b>£__KPI_ORACLE__</b>/MW/yr) sits <b>below</b> all-stream revenue (<b>£__KPI_REAL__</b>/MW/yr). Revenue stacking, not arbitrage, defines the GB BESS investment case.</li>
+      <li>Achieved wholesale arbitrage is only <b>~23%</b> of the theoretical maximum. Perfect foresight is impossible, and the biggest price spikes are nearly unforecastable.</li>
+      <li>Even the theoretical maximum (<b>£65,179</b>/MW/yr) sits <b>below</b> all-stream revenue (<b>£72,000</b>/MW/yr). Revenue stacking, not arbitrage, defines the GB BESS investment case.</li>
     </ul>
   </div>
 
@@ -346,7 +171,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <script>
-const DATA = __DATA__;
+const DATA = {"sampleDate": "2025-05-14", "sampleDay": {"times": ["23:00", "23:30", "00:00", "00:30", "01:00", "01:30", "02:00", "02:30", "03:00", "03:30", "04:00", "04:30", "05:00", "05:30", "06:00", "06:30", "07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30"], "prices": [62.0, 110.33, 82.51, 61.3, 57.1, 57.1, 57.1, 57.1, 57.05, 57.05, 57.05, 57.05, 57.15, 88.2, 107.31, 83.26, 60.21525396825397, 57.4, 50.0, 57.07, 99.0, 96.0, 84.9, 99.5, 90.21, 39.44660675762118, 89.0, 89.0, 84.9, 108.0, 51.0, 52.5, 84.9, 84.9, 65.21, 63.29, 55.74, 55.55, 108.0, 115.0, 108.0, 108.0, 102.45, 63.5, 55.9, 62.0, 115.0, 115.0], "roles": ["idle", "discharge", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "charge", "idle", "idle", "idle", "idle", "idle", "idle", "charge", "idle", "idle", "idle", "idle", "charge", "charge", "idle", "idle", "idle", "idle", "idle", "idle", "idle", "discharge", "idle", "idle", "idle", "idle", "idle", "idle", "discharge", "discharge"]}, "dailyPnl": {"dates": ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-11", "2025-01-12", "2025-01-13", "2025-01-14", "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-18", "2025-01-19", "2025-01-20", "2025-01-21", "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-25", "2025-01-26", "2025-01-27", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-01", "2025-02-02", "2025-02-03", "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07", "2025-02-08", "2025-02-09", "2025-02-10", "2025-02-11", "2025-02-12", "2025-02-13", "2025-02-14", "2025-02-15", "2025-02-16", "2025-02-17", "2025-02-18", "2025-02-19", "2025-02-20", "2025-02-21", "2025-02-22", "2025-02-23", "2025-02-24", "2025-02-25", "2025-02-26", "2025-02-27", "2025-02-28", "2025-03-01", "2025-03-02", "2025-03-03", "2025-03-04", "2025-03-05", "2025-03-06", "2025-03-07", "2025-03-08", "2025-03-09", "2025-03-10", "2025-03-11", "2025-03-12", "2025-03-13", "2025-03-14", "2025-03-15", "2025-03-16", "2025-03-17", "2025-03-18", "2025-03-19", "2025-03-20", "2025-03-21", "2025-03-22", "2025-03-23", "2025-03-24", "2025-03-25", "2025-03-26", "2025-03-27", "2025-03-28", "2025-03-29", "2025-03-31", "2025-04-01", "2025-04-02", "2025-04-03", "2025-04-04", "2025-04-05", "2025-04-06", "2025-04-07", "2025-04-08", "2025-04-09", "2025-04-10", "2025-04-11", "2025-04-12", "2025-04-13", "2025-04-14", "2025-04-15", "2025-04-16", "2025-04-17", "2025-04-18", "2025-04-19", "2025-04-20", "2025-04-21", "2025-04-22", "2025-04-23", "2025-04-24", "2025-04-25", "2025-04-26", "2025-04-27", "2025-04-28", "2025-04-29", "2025-04-30", "2025-05-01", "2025-05-02", "2025-05-03", "2025-05-04", "2025-05-05", "2025-05-06", "2025-05-07", "2025-05-08", "2025-05-09", "2025-05-10", "2025-05-11", "2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-17", "2025-05-18", "2025-05-19", "2025-05-20", "2025-05-21", "2025-05-22", "2025-05-23", "2025-05-24", "2025-05-25", "2025-05-26", "2025-05-27", "2025-05-28", "2025-05-29", "2025-05-30", "2025-05-31", "2025-06-01", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05", "2025-06-06", "2025-06-07", "2025-06-08", "2025-06-09", "2025-06-10", "2025-06-11", "2025-06-12", "2025-06-13", "2025-06-14", "2025-06-15", "2025-06-16", "2025-06-17", "2025-06-18", "2025-06-19", "2025-06-20", "2025-06-21", "2025-06-22", "2025-06-23", "2025-06-24", "2025-06-25", "2025-06-26", "2025-06-27", "2025-06-28", "2025-06-29", "2025-06-30", "2025-07-01", "2025-07-02", "2025-07-03", "2025-07-04", "2025-07-05", "2025-07-06", "2025-07-07", "2025-07-08", "2025-07-09", "2025-07-10", "2025-07-11", "2025-07-12", "2025-07-13", "2025-07-14", "2025-07-15", "2025-07-16", "2025-07-17", "2025-07-18", "2025-07-19", "2025-07-20", "2025-07-21", "2025-07-22", "2025-07-23", "2025-07-24", "2025-07-25", "2025-07-26", "2025-07-27", "2025-07-28", "2025-07-29", "2025-07-30", "2025-07-31", "2025-08-01", "2025-08-02", "2025-08-03", "2025-08-04", "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-09", "2025-08-10", "2025-08-11", "2025-08-12", "2025-08-13", "2025-08-14", "2025-08-15", "2025-08-16", "2025-08-17", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-22", "2025-08-23", "2025-08-24", "2025-08-25", "2025-08-26", "2025-08-27", "2025-08-28", "2025-08-29", "2025-08-30", "2025-08-31", "2025-09-01", "2025-09-02", "2025-09-03", "2025-09-04", "2025-09-05", "2025-09-06", "2025-09-07", "2025-09-08", "2025-09-09", "2025-09-10", "2025-09-11", "2025-09-12", "2025-09-13", "2025-09-14", "2025-09-15", "2025-09-16", "2025-09-17", "2025-09-18", "2025-09-19", "2025-09-20", "2025-09-21", "2025-09-22", "2025-09-23", "2025-09-24", "2025-09-25", "2025-09-26", "2025-09-27", "2025-09-28", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-02", "2025-10-03", "2025-10-04", "2025-10-05", "2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-10", "2025-10-11", "2025-10-12", "2025-10-13", "2025-10-14", "2025-10-15", "2025-10-16", "2025-10-17", "2025-10-18", "2025-10-19", "2025-10-20", "2025-10-21", "2025-10-22", "2025-10-23", "2025-10-24", "2025-10-25", "2025-10-27", "2025-10-28", "2025-10-29", "2025-10-30", "2025-10-31", "2025-11-01", "2025-11-02", "2025-11-03", "2025-11-04", "2025-11-05", "2025-11-06", "2025-11-07", "2025-11-08", "2025-11-09", "2025-11-10", "2025-11-11", "2025-11-12", "2025-11-13", "2025-11-14", "2025-11-15", "2025-11-16", "2025-11-17", "2025-11-18", "2025-11-19", "2025-11-20", "2025-11-21", "2025-11-22", "2025-11-23", "2025-11-24", "2025-11-25", "2025-11-26", "2025-11-27", "2025-11-28", "2025-11-29", "2025-11-30", "2025-12-01", "2025-12-02", "2025-12-03", "2025-12-04", "2025-12-05", "2025-12-06", "2025-12-07", "2025-12-08", "2025-12-09", "2025-12-10", "2025-12-11", "2025-12-12", "2025-12-13", "2025-12-14", "2025-12-15", "2025-12-16", "2025-12-17", "2025-12-18", "2025-12-19", "2025-12-20", "2025-12-21", "2025-12-22", "2025-12-23", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-27", "2025-12-28", "2025-12-29", "2025-12-30", "2025-12-31"], "net": [16372.0, 7668.0, 11013.0, 5090.0, 5634.0, 9104.0, 5834.0, 245881.0, 8132.0, 11491.0, 9447.0, 6963.0, 6331.0, 5849.0, 5470.0, 4922.0, 7340.0, 7327.0, 7877.0, 31404.0, 11008.0, 16307.0, 5510.0, 12954.0, 15385.0, 13047.0, 12777.0, 16514.0, 11328.0, 13385.0, 6628.0, 7808.0, 11491.0, 8728.0, 5157.0, 6844.0, 6537.0, 3900.0, 5072.0, 7532.0, 6684.0, 4804.0, 7127.0, 9235.0, 9424.0, 4651.0, 11126.0, 5155.0, 12708.0, 12000.0, 8759.0, 12420.0, 11668.0, 10187.0, 15242.0, 9087.0, 7103.0, 4279.0, 3699.0, 6732.0, 5044.0, 10374.0, 10494.0, 10415.0, 9898.0, 10782.0, 3539.0, 4335.0, 7489.0, 6276.0, 4436.0, 8539.0, 5726.0, 3678.0, 4042.0, 4699.0, 7323.0, 9577.0, 5444.0, 7344.0, 11968.0, 8216.0, 7172.0, 8261.0, 4446.0, 10494.0, 10835.0, 11936.0, 7685.0, 14235.0, 16754.0, 7702.0, 12211.0, 18534.0, 15037.0, 7277.0, 6442.0, 3513.0, 8531.0, 4953.0, 13981.0, 10659.0, 11638.0, 6000.0, 9369.0, 8366.0, 5386.0, 9804.0, 5088.0, 3577.0, 4889.0, 6206.0, 5471.0, 4400.0, 4335.0, 14014.0, 11476.0, 5236.0, 4835.0, 5064.0, 7168.0, 7506.0, 10139.0, 6840.0, 7880.0, 5294.0, 5163.0, 11254.0, 11704.0, 6722.0, 5474.0, 7434.0, 4852.0, 4771.0, 11116.0, 11320.0, 6712.0, 9004.0, 5826.0, 8731.0, 4907.0, 6065.0, 10075.0, 12688.0, 11932.0, 12365.0, 5578.0, 11468.0, 10453.0, 10366.0, 10416.0, 6685.0, 15446.0, 9996.0, 8038.0, 8543.0, 5192.0, 12944.0, 6618.0, 11276.0, 6372.0, 10448.0, 10482.0, 13212.0, 10187.0, 11028.0, 10871.0, 4266.0, 5348.0, 4769.0, 10254.0, 17398.0, 11339.0, 14384.0, 8373.0, 15907.0, 10890.0, 15398.0, 12164.0, 34343.0, 13018.0, 6162.0, 9759.0, 12497.0, 14956.0, 4812.0, 12725.0, 8621.0, 5707.0, 6019.0, 4975.0, 9101.0, 9293.0, 10099.0, 10087.0, 4121.0, 2712.0, 3486.0, 4502.0, 4141.0, 2965.0, 3208.0, 6167.0, 3744.0, 4028.0, 4687.0, 3236.0, 4201.0, 5064.0, 2992.0, 5037.0, 10110.0, 10087.0, 15755.0, 10869.0, 10978.0, 11960.0, 12146.0, 10260.0, 12735.0, 9600.0, 10389.0, 5916.0, 6830.0, 7544.0, 4192.0, 5845.0, 4884.0, 4556.0, 3806.0, 7059.0, 4451.0, 5867.0, 4234.0, 3824.0, 12112.0, 7490.0, 9080.0, 4878.0, 6610.0, 10498.0, 11442.0, 10725.0, 6081.0, 6504.0, 5427.0, 5271.0, 17084.0, 9870.0, 7972.0, 14085.0, 12276.0, 14717.0, 13922.0, 12396.0, 10647.0, 13642.0, 11659.0, 9592.0, 10848.0, 13295.0, 10490.0, 12958.0, 7015.0, 6488.0, 6254.0, 8147.0, 4681.0, 5017.0, 6192.0, 7723.0, 7687.0, 7082.0, 8376.0, 11113.0, 7000.0, 10862.0, 11567.0, 8437.0, 5418.0, 4901.0, 4439.0, 5886.0, 6358.0, 22009.0, 10256.0, 9221.0, 4894.0, 4432.0, 3588.0, 9434.0, 7501.0, 6073.0, 18746.0, 8891.0, 9423.0, 10188.0, 12613.0, 9938.0, 10784.0, 6618.0, 9708.0, 11390.0, 7199.0, 9834.0, 11205.0, 7607.0, 4629.0, 3851.0, 3957.0, 3230.0, 5751.0, 4761.0, 9558.0, 8213.0, 5234.0, 6398.0, 4288.0, 8168.0, 6428.0, 4469.0, 6122.0, 11922.0, 3213.0, 7424.0, 8949.0, 10351.0, 7528.0, 7462.0, 4852.0, 9466.0, 12030.0, 5474.0, 7167.0, 5759.0, 4416.0, 3652.0, 8194.0, 5507.0, 5864.0, 8167.0, 8424.0, 6150.0, 4805.0, 6795.0, 7617.0, 7149.0, 4970.0, 5283.0, 8018.0, 8369.0, 6684.0, 2022.0, 8697.0, 2421.0, 4722.0, 3827.0, 3834.0, 1936.0, 3447.0, 3706.0, 4299.0, 5533.0]}, "stack": {"labels": ["Balancing Mechanism", "Frequency response (DC etc.)", "Wholesale arbitrage (achieved)", "Capacity Market", "Other (DM, DR, triad)"], "values": [28000, 18000, 15000, 7000, 4000], "colours": ["#2f6f9f", "#e08a1e", "#3a9d5d", "#8a6bbf", "#9c6b58"]}, "duration": {"labels": ["1-hour", "2-hour", "4-hour"], "perMw": [36010, 65179, 111395], "perMwh": [36010, 32589, 27849]}, "kpis": {"oracle_per_mw": 65179, "achieved": 15000, "real_total": 72000, "pct_of_ceiling": 23}, "oracle": 65179};
 
 const FONT = "'Inter', system-ui, sans-serif";
 const MONO = "'IBM Plex Mono', monospace";
@@ -545,8 +370,3 @@ new Chart(document.getElementById("durationChart"), {
 </script>
 </body>
 </html>
-"""
-
-
-if __name__ == "__main__":
-    main()
