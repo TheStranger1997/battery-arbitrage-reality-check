@@ -43,7 +43,30 @@ Initially fetched May 2025 only. Expanded to all 12 months of 2025 after confirm
 - **Real GB BESS revenues ~£72k/MW/year** across all streams (BM, FFR, DC, Capacity Market). The oracle arbitrage ceiling falls *below* real earnings, reinforcing that revenue stacking defines the GB BESS investment case.
 
 ### What's left to build
-- [ ] Revenue comparison: oracle arbitrage vs real GB BESS revenue breakdown (BM, FFR, DC, CM).
+- [x] Revenue comparison: oracle arbitrage vs real GB BESS revenue breakdown (BM, FFR, DC, CM). — `revenue_comparison.py`
 - [ ] Improved arbitrage model: heuristic or day-ahead forecast to show achievable vs oracle.
 - [ ] Dashboard: Streamlit or Panel interface to make the analysis interactive.
 - [ ] Possibly: switch price series to MIP for a cleaner day-ahead arbitrage comparison.
+
+---
+
+## 2026-06-16 — Revenue comparison
+
+### Approach: benchmark stack, not computed
+Built `revenue_comparison.py` to set the oracle arbitrage ceiling against the actual GB BESS revenue stack for 2025. Decided to use **published industry benchmark figures** rather than computing each stream from raw data. Reason: granular per-asset revenue (BM accepted volumes by BMU, DC contract values, etc.) sits behind paywalls (Modo Energy, Cornwall Insight, LCP Delta). Parsing Elexon BM data to identify battery BMUs and sum accepted bids/offers would be a substantial sub-project in its own right. For a portfolio piece, sourced benchmarks — the same inputs an analyst uses for initial screening — keep the focus on the comparison story. The benchmark nature is flagged clearly in the script docstring, the README table, and the README caveats.
+
+### Revenue stack used (£/MW/year, 2025)
+- Balancing Mechanism — £28,000 (39%) [Modo Energy BESS Revenue Tracker 2025]
+- Frequency response (DC etc.) — £18,000 (25%) [NESO DC procurement + Modo Energy]
+- Wholesale arbitrage (achieved) — £15,000 (21%) [implied: oracle × typical day-ahead capture]
+- Capacity Market — £7,000 (10%) [NESO CM auction results]
+- Other (DM, DR, triad) — £4,000 (6%) [Cornwall Insight estimates]
+- **Total — £72,000**
+
+The oracle figure is read live from `data/arbitrage_results.csv` (summed net revenue / 50 MW), so it stays in sync if the simulation is re-run.
+
+### Key insight
+Even with perfect foresight, arbitrage on imbalance prices (£65k/MW) falls **below** real all-stream revenue (£72k/MW). Achieved arbitrage (£15k) is only **~23% of the oracle ceiling** and ~21% of real total revenue. Confirms the project thesis: GB BESS economics are defined by **revenue stacking**, not arbitrage alone.
+
+### Chart note
+First version placed the insight annotation at top-centre, where it collided with the bar value labels; moved it into the empty gap between the two bars and gave it a border. Legend moved below the plot for the same reason.

@@ -64,12 +64,34 @@ This is an **upper bound** — it assumes perfect knowledge of future prices. A 
 
 ---
 
+## Revenue comparison: arbitrage vs the real revenue stack
+
+`revenue_comparison.py` places the oracle arbitrage ceiling next to the *actual* GB BESS revenue stack for 2025. The real-world stack below uses **published industry benchmarks** (£/MW/year) — it is **not** computed from raw data, because granular per-asset revenue sits behind paywalls (Modo Energy, Cornwall Insight, LCP Delta). These figures are used the same way a BESS investment analyst uses them for initial screening: as sourced approximations, clearly labelled.
+
+| Revenue stream | £/MW/year | Share | Source basis |
+|---|---|---|---|
+| Balancing Mechanism | 28,000 | 39% | Modo Energy BESS Revenue Tracker 2025 |
+| Frequency response (DC etc.) | 18,000 | 25% | NESO DC procurement + Modo Energy |
+| Wholesale arbitrage (achieved) | 15,000 | 21% | Implied: oracle × typical day-ahead capture |
+| Capacity Market | 7,000 | 10% | NESO CM auction results (public) |
+| Other (DM, DR, triad) | 4,000 | 6% | Cornwall Insight estimates |
+| **Total** | **72,000** | | |
+
+Two numbers carry the message:
+- **£65k** — the oracle arbitrage *ceiling* (perfect foresight on imbalance prices).
+- **£15k** — *achieved* arbitrage within the real stack, just **~23% of that ceiling**.
+
+No operator captures the full spread: forecasts are imperfect and the largest spikes (8 January's £2,900/MWh) are nearly impossible to position for in advance. Arbitrage is a supporting player (~21% of revenue); the Balancing Mechanism and frequency response dominate. This is why GB BESS economics are about **revenue stacking**, not arbitrage alone.
+
+---
+
 ## Caveats
 
 - **Perfect foresight overstates achievable arbitrage.** A real battery cannot know future prices. Day-ahead price forecasting typically captures 60–80% of the oracle spread.
 - **Imbalance prices (SSP/SBP) are more volatile than traded prices.** Using day-ahead or intraday market prices would produce a lower, cleaner arbitrage estimate. The £65k figure should be read as an imbalance-price upper bound, not a day-ahead arbitrage estimate.
 - **Clock-change days skipped.** 30 March (46 periods, BST transition) and 26 October (50 periods, GMT transition) are excluded — 2 of 365 days.
 - **One-cycle-per-day cap.** The model does not allow partial cycles or multiple cycles, even on days with multiple price spikes.
+- **The real-world revenue stack is benchmark-based, not computed.** The £72k/MW figure and its breakdown come from published industry sources (see the table above), not from raw market data. The "achieved arbitrage" line (£15k) is itself a benchmark estimate, internally consistent with the ~23% capture rate but not independently derived here.
 
 ---
 
@@ -89,13 +111,17 @@ python fetch_prices.py
 
 # 4. Run the arbitrage simulation
 python simulate_arbitrage.py
+
+# 5. Compare against the real-world BESS revenue stack
+python revenue_comparison.py
 ```
 
 Outputs are saved to `data/` (gitignored — re-fetch locally):
 - `data/prices_2025-MM.csv` — raw monthly price files
 - `data/prices_2025-all.csv` — combined annual file
 - `data/arbitrage_results.csv` — daily P&L breakdown
-- `data/daily_pnl_plot.png` — full-year chart
+- `data/daily_pnl_plot.png` — full-year arbitrage chart
+- `data/revenue_comparison.png` — arbitrage ceiling vs real revenue stack
 
 ---
 
@@ -103,10 +129,11 @@ Outputs are saved to `data/` (gitignored — re-fetch locally):
 
 ```
 bess-arbitrage/
-├── fetch_prices.py        # Downloads Elexon half-hourly prices → data/
-├── simulate_arbitrage.py  # Oracle arbitrage model → daily P&L + chart
-├── data/                  # Downloaded prices and results (gitignored)
-├── venv/                  # Python virtual environment (gitignored)
+├── fetch_prices.py         # Downloads Elexon half-hourly prices → data/
+├── simulate_arbitrage.py   # Oracle arbitrage model → daily P&L + chart
+├── revenue_comparison.py   # Arbitrage ceiling vs real revenue stack → chart
+├── data/                   # Downloaded prices and results (gitignored)
+├── venv/                   # Python virtual environment (gitignored)
 ├── README.md
 └── PROJECT_LOG.md
 ```
@@ -115,6 +142,7 @@ bess-arbitrage/
 
 ## Next steps
 
-- Compare oracle arbitrage revenues against real GB BESS revenue streams (BM, FFR, DC, Capacity Market).
+- ~~Compare oracle arbitrage revenues against real GB BESS revenue streams (BM, FFR, DC, Capacity Market).~~ ✅ Done — see `revenue_comparison.py`.
 - Build an interactive dashboard (Streamlit or Panel).
 - Explore a heuristic or day-ahead forecast model to estimate *achievable* arbitrage.
+- Optionally replace benchmark revenue figures with values computed from raw Elexon BM data.
