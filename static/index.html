@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tennis Swing Analyser</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f1117; color: #e0e0e0;
+    min-height: 100vh; padding: 32px 16px;
+  }
+  .page { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; font-weight: 800; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 36px; }
+
+  /* ── Upload zone ── */
+  #dropzone {
+    border: 2px dashed #2a2d3a;
+    border-radius: 14px;
+    padding: 52px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+  }
+  #dropzone.drag-over { border-color: #4ea3d4; background: #141824; }
+  #dropzone.has-file  { border-color: #3a9d5d; }
+  .drop-icon { font-size: 3rem; margin-bottom: 16px; }
+  .drop-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+  .drop-sub { color: #888; font-size: 0.85rem; margin-bottom: 20px; }
+  #file-input { display: none; }
+  .btn-choose {
+    display: inline-block; padding: 10px 24px;
+    background: #1e2235; border: 1px solid #2a2d3a;
+    border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+    transition: background .2s;
+  }
+  .btn-choose:hover { background: #252840; }
+  .file-name { margin-top: 14px; color: #3a9d5d; font-size: 0.85rem; }
+  .hint { color: #555; font-size: 0.75rem; margin-top: 10px; }
+
+  /* ── Analyse button ── */
+  #analyse-btn {
+    display: none; width: 100%; margin-top: 18px;
+    padding: 14px; border: none; border-radius: 10px;
+    background: #4ea3d4; color: #fff;
+    font-size: 1rem; font-weight: 700; cursor: pointer;
+    transition: background .2s, opacity .2s;
+  }
+  #analyse-btn:hover { background: #3d8fc0; }
+  #analyse-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ── Progress ── */
+  #progress { display: none; text-align: center; padding: 48px 0; }
+  .spinner {
+    width: 48px; height: 48px; margin: 0 auto 20px;
+    border: 4px solid #2a2d3a;
+    border-top-color: #4ea3d4;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-text { color: #aaa; font-size: 0.9rem; }
+  .progress-bar {
+    width: 260px; height: 4px; background: #2a2d3a;
+    border-radius: 2px; margin: 16px auto 0; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0%; background: #4ea3d4;
+    border-radius: 2px;
+    animation: indeterminate 1.4s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { width: 0%;   margin-left: 0%; }
+    50%  { width: 60%;  margin-left: 20%; }
+    100% { width: 0%;   margin-left: 100%; }
+  }
+
+  /* ── Error ── */
+  #error-box {
+    display: none; margin-top: 20px;
+    background: #2a1010; border: 1px solid #c0392b;
+    border-radius: 10px; padding: 16px 20px; color: #e07070;
+    font-size: 0.9rem;
+  }
+
+  /* ── Results ── */
+  #results { display: none; margin-top: 32px; }
+  .kpi-row { display: flex; gap: 14px; margin-bottom: 28px; flex-wrap: wrap; }
+  .kpi {
+    background: #1a1d27; border-radius: 10px;
+    padding: 16px 20px; flex: 1; min-width: 140px;
+  }
+  .kpi .label { font-size: 0.72rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }
+  .kpi .value { font-size: 2rem; font-weight: 800; margin-top: 2px; }
+  .kpi .unit  { font-size: 0.78rem; color: #888; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #1a1d27; border-radius: 10px; padding: 20px; }
+  .card h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 14px; color: #ccc; }
+  canvas { max-height: 280px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; color: #666; font-weight: 500; padding: 5px 7px;
+       border-bottom: 1px solid #2a2d3a; }
+  td { padding: 9px 7px; border-bottom: 1px solid #1e2130; vertical-align: middle; }
+  .bar-wrap { width: 80px; background: #2a2d3a; border-radius: 4px; height: 6px; display: inline-block; vertical-align: middle; }
+  .bar-fill  { height: 6px; border-radius: 4px; }
+  .rating-E  { color: #3a9d5d; font-weight: 600; }
+  .rating-G  { color: #4ea3d4; font-weight: 600; }
+  .rating-F  { color: #e08a1e; font-weight: 600; }
+  .rating-P  { color: #c0392b; font-weight: 600; }
+  .coaching  { background: #1a1d27; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  .coaching h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; color: #ccc; }
+  .fix-item  {
+    background: #0f1117; border-left: 3px solid #e08a1e;
+    padding: 10px 14px; margin-bottom: 10px; border-radius: 4px;
+  }
+  .fix-item .mn { font-weight: 600; font-size: 0.78rem; color: #e08a1e;
+                  text-transform: uppercase; margin-bottom: 3px; }
+  .fix-item .ft { font-size: 0.82rem; color: #ccc; }
+  .report-btn {
+    display: block; width: 100%; padding: 14px; border: none;
+    border-radius: 10px; background: #1e2235; border: 1px solid #2a2d3a;
+    color: #ccc; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer; text-align: center; text-decoration: none;
+    transition: background .2s;
+  }
+  .report-btn:hover { background: #252840; }
+
+  /* ── Try again ── */
+  #try-again {
+    display: none; margin-top: 16px; width: 100%; padding: 12px;
+    border: 1px solid #2a2d3a; border-radius: 10px;
+    background: transparent; color: #888; cursor: pointer; font-size: 0.88rem;
+  }
+  #try-again:hover { color: #ccc; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Tennis Swing Analyser</h1>
+  <p class="subtitle">Upload a side-on video of your forehand · get instant biomechanical feedback</p>
+
+  <!-- Upload -->
+  <div id="dropzone">
+    <div class="drop-icon">🎾</div>
+    <div class="drop-title">Drag &amp; drop your video here</div>
+    <div class="drop-sub">Side-on camera angle works best</div>
+    <label class="btn-choose" for="file-input">Choose file</label>
+    <input type="file" id="file-input" accept="video/*">
+    <div class="file-name" id="file-name"></div>
+    <div class="hint">MP4 · MOV · AVI &nbsp;|&nbsp; Max ~200 MB</div>
+  </div>
+
+  <button id="analyse-btn">Analyse my swing →</button>
+
+  <!-- Progress -->
+  <div id="progress">
+    <div class="spinner"></div>
+    <div class="status-text" id="status-text">Uploading video…</div>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-box"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="kpi-row" id="kpi-row"></div>
+    <div class="grid">
+      <div class="card">
+        <h2>Metric Scores</h2>
+        <canvas id="radarChart"></canvas>
+      </div>
+      <div class="card">
+        <h2>All Metrics</h2>
+        <table>
+          <thead><tr><th>Metric</th><th>Value</th><th>Score</th><th>Rating</th></tr></thead>
+          <tbody id="metrics-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="coaching" id="coaching"><h2>Priority Fixes</h2></div>
+    <a id="report-link" class="report-btn" href="#" target="_blank">View full report →</a>
+    <button id="try-again">↩ Analyse another video</button>
+  </div>
+</div>
+
+<script>
+// ── File selection ────────────────────────────────────────────────────────────
+const dropzone   = document.getElementById("dropzone");
+const fileInput  = document.getElementById("file-input");
+const fileName   = document.getElementById("file-name");
+const analyseBtn = document.getElementById("analyse-btn");
+let selectedFile = null;
+
+function selectFile(f) {
+  if (!f || !f.type.startsWith("video/")) return;
+  selectedFile = f;
+  fileName.textContent = f.name;
+  dropzone.classList.add("has-file");
+  analyseBtn.style.display = "block";
+}
+
+fileInput.addEventListener("change", e => selectFile(e.target.files[0]));
+
+dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("drag-over"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag-over"));
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropzone.classList.remove("drag-over");
+  selectFile(e.dataTransfer.files[0]);
+});
+
+// ── Analysis ─────────────────────────────────────────────────────────────────
+analyseBtn.addEventListener("click", async () => {
+  if (!selectedFile) return;
+  setPhase("progress");
+
+  const formData = new FormData();
+  formData.append("video", selectedFile);
+
+  const statusEl = document.getElementById("status-text");
+  statusEl.textContent = "Uploading video…";
+
+  let data;
+  try {
+    setTimeout(() => { statusEl.textContent = "Extracting pose landmarks…"; }, 2000);
+    setTimeout(() => { statusEl.textContent = "Computing biomechanical metrics…"; }, 5000);
+    setTimeout(() => { statusEl.textContent = "Scoring & building report…"; }, 10000);
+
+    const res = await fetch("/analyse", { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Analysis failed");
+    }
+    data = await res.json();
+  } catch (err) {
+    showError(err.message);
+    return;
+  }
+
+  renderResults(data);
+});
+
+// ── Try again ─────────────────────────────────────────────────────────────────
+document.getElementById("try-again").addEventListener("click", () => {
+  selectedFile = null;
+  fileInput.value = "";
+  fileName.textContent = "";
+  dropzone.classList.remove("has-file");
+  analyseBtn.style.display = "none";
+  setPhase("upload");
+  // destroy old radar chart
+  if (window._radarChart) { window._radarChart.destroy(); window._radarChart = null; }
+});
+
+// ── Phases ────────────────────────────────────────────────────────────────────
+function setPhase(phase) {
+  document.getElementById("dropzone").style.display   = phase === "upload"    ? "" : "none";
+  analyseBtn.style.display                            = phase === "upload" && selectedFile ? "block" : "none";
+  document.getElementById("progress").style.display   = phase === "progress"  ? "" : "none";
+  document.getElementById("error-box").style.display  = phase === "error"     ? "" : "none";
+  document.getElementById("results").style.display    = phase === "results"   ? "" : "none";
+  document.getElementById("try-again").style.display  = phase === "results"   ? "block" : "none";
+}
+
+function showError(msg) {
+  const box = document.getElementById("error-box");
+  box.textContent = "⚠ " + msg;
+  setPhase("error");
+  document.getElementById("dropzone").style.display = "";
+  analyseBtn.style.display = "block";
+  box.style.display = "";
+}
+
+// ── Render results ────────────────────────────────────────────────────────────
+function scoreColor(s) {
+  if (s >= 90) return "#3a9d5d";
+  if (s >= 70) return "#4ea3d4";
+  if (s >= 50) return "#e08a1e";
+  return "#c0392b";
+}
+function ratingClass(r) {
+  return {Excellent:"rating-E", Good:"rating-G", Fair:"rating-F", Poor:"rating-P"}[r] || "";
+}
+const LABEL = {
+  elbow_angle_deg:"Elbow Angle", shoulder_hip_diff_deg:"Kinetic Chain",
+  knee_bend_deg:"Knee Bend", wrist_height_ratio:"Wrist Height", body_lean_deg:"Body Lean",
+};
+
+function renderResults(data) {
+  setPhase("results");
+
+  // KPIs
+  const kpiRow = document.getElementById("kpi-row");
+  kpiRow.innerHTML = "";
+  const kpis = [
+    { label:"Overall Score", value: data.overall_score, unit:"/100", color: scoreColor(data.overall_score) },
+    { label:"Contact Time",  value: data.contact_time_sec ? data.contact_time_sec.toFixed(2) : "—", unit:"sec" },
+  ];
+  // add top 2 scored metrics
+  const scored = [...data.scores].sort((a,b) => b.score - a.score).slice(0, 2);
+  scored.forEach(s => kpis.push({
+    label: LABEL[s.metric] || s.metric,
+    value: parseFloat(s.value).toFixed(1),
+    unit: s.unit || "",
+    color: scoreColor(s.score),
+  }));
+  kpis.forEach(k => {
+    kpiRow.innerHTML += `<div class="kpi">
+      <div class="label">${k.label}</div>
+      <div class="value" style="color:${k.color||'#e0e0e0'}">${k.value}</div>
+      <div class="unit">${k.unit}</div>
+    </div>`;
+  });
+
+  // Radar
+  const radarLabels = [], radarValues = [];
+  data.scores.forEach(s => {
+    if (LABEL[s.metric]) { radarLabels.push(LABEL[s.metric]); radarValues.push(s.score); }
+  });
+  if (window._radarChart) window._radarChart.destroy();
+  window._radarChart = new Chart(document.getElementById("radarChart"), {
+    type: "radar",
+    data: {
+      labels: radarLabels,
+      datasets: [{
+        label: "Score",
+        data: radarValues,
+        backgroundColor: "rgba(78,163,212,0.18)",
+        borderColor: "#4ea3d4",
+        pointBackgroundColor: "#4ea3d4",
+      }]
+    },
+    options: {
+      scales: { r: { min:0, max:100, ticks:{color:"#555",stepSize:25},
+        grid:{color:"#2a2d3a"}, pointLabels:{color:"#bbb",font:{size:11}} }},
+      plugins: { legend:{display:false} },
+    }
+  });
+
+  // Metrics table
+  const tbody = document.getElementById("metrics-tbody");
+  tbody.innerHTML = "";
+  data.scores.forEach(s => {
+    const c = scoreColor(s.score);
+    tbody.innerHTML += `<tr>
+      <td>${LABEL[s.metric]||s.metric}</td>
+      <td>${parseFloat(s.value).toFixed(2)}</td>
+      <td>
+        <span class="bar-wrap"><span class="bar-fill" style="width:${s.score}%;background:${c}"></span></span>
+        <span style="margin-left:5px;font-size:0.78rem">${s.score}</span>
+      </td>
+      <td class="${ratingClass(s.rating)}">${s.rating}</td>
+    </tr>
+    <tr><td colspan="4" style="color:#666;font-size:0.76rem;padding:2px 7px 9px">${s.feedback}</td></tr>`;
+  });
+
+  // Coaching: worst 2 metrics
+  const coaching = document.getElementById("coaching");
+  coaching.innerHTML = "<h2>Priority Fixes</h2>";
+  [...data.scores].sort((a,b) => a.score - b.score).slice(0, 2).forEach(s => {
+    coaching.innerHTML += `<div class="fix-item">
+      <div class="mn">${LABEL[s.metric]||s.metric} — ${s.score}/100</div>
+      <div class="ft">${s.feedback}</div>
+    </div>`;
+  });
+
+  // Full report link
+  document.getElementById("report-link").href = data.report_url;
+}
+</script>
+</body>
+</html>

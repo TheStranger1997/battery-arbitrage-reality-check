@@ -8,3 +8,4 @@ __pycache__/
 
 # ...but do commit the curated charts embedded in the README
 !assets/*.png
+results/

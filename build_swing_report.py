@@ -49,6 +49,25 @@ def build_radar_payload(scores: list[dict]) -> dict:
     return {"labels": labels, "values": values}
 
 
+# ── Callable API (used by pipeline.py) ───────────────────────────────────────
+
+def build_report(
+    results_file: str = RESULTS_FILE,
+    scores_file:  str = SCORES_FILE,
+    output_html:  str = OUTPUT_HTML,
+) -> str:
+    """Build a self-contained HTML report from explicit file paths. Returns output path."""
+    results = pd.read_csv(results_file).iloc[0].to_dict()
+    scores  = pd.read_csv(scores_file).to_dict(orient="records")
+    radar   = build_radar_payload(scores)
+    overall = round(sum(r["score"] for r in scores) / len(scores), 1) if scores else 0
+    payload = {"results": results, "scores": scores, "radar": radar, "overall": overall}
+    html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload))
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html)
+    return output_html
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
